@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import threading
 from collections import defaultdict
@@ -97,6 +98,7 @@ def fetch_audio(video_id: str, destination: Path, ydl_cls=YoutubeDL) -> Path:
         lock = _download_locks[video_id]
     with lock:  # the same video requested twice downloads once
         if wav.is_file() and wav.stat().st_size > 0:
+            os.utime(wav)  # cache hit: restart its expiry clock (cleanup counts from last use)
             return wav
         options = {
             "format": "bestaudio/best",

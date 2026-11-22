@@ -39,7 +39,7 @@ TMP = Path(os.getenv("MOODFLOW_TMP", ROOT / "tmp"))
 CACHE_DIR = TMP / "cache"
 MIX_DIR = TMP / "mixes"
 MIX_TTL_SEC = int(os.getenv("MOODFLOW_MIX_TTL", 3600))
-CACHE_TTL_SEC = int(os.getenv("MOODFLOW_CACHE_TTL", 6 * 3600))
+CACHE_TTL_SEC = int(os.getenv("MOODFLOW_CACHE_TTL", 48 * 3600))  # since last use
 MAX_MIX_TRACKS = 6
 DOWNLOAD_WORKERS = 3
 

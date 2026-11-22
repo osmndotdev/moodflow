@@ -89,7 +89,7 @@ Spotify id for ReccoBeats) in `tmp/cache/provider_cache.json`, so a track's data
 
 Delete `tmp/cache/provider_cache.json` to force fresh lookups.
 
-Temporary files live in `tmp/` (mixes expire after 1 h, cached WAVs after 6 h; see `.env.example`).
+Temporary files live in `tmp/` (mixes expire after 1 h, cached WAVs 48 h after their last use; see `.env.example`).
 The provider cache is not touched by that cleanup.
 
 ## Known limits (demo scope)
