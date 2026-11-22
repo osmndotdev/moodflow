@@ -65,11 +65,22 @@ export interface TransitionStep {
   total: number;
 }
 
+export type CurveFeature = "bpm" | "energy" | "valence";
+
+/** User-drawn target: values in the feature's units, evenly spaced over the order. */
+export interface TargetCurve {
+  feature: CurveFeature;
+  points: number[];
+  strength: number; // 0 = smooth transitions only … 1 = fit the curve only
+}
+
 export interface RankResponse {
   ordered_ids: string[];
   score_before: number;
   score_after: number;
   kept_original: boolean;
+  curve_error_before: number | null;
+  curve_error_after: number | null;
   transition_costs: number[];
   transition_breakdown: { before: TransitionStep[]; after: TransitionStep[] };
 }
@@ -131,8 +142,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   importPlaylist: (url: string) =>
     request<ImportResponse>("/api/import", { method: "POST", body: JSON.stringify({ url }) }),
-  rank: (tracks: Track[], mode: Mode, weights?: Weights) =>
-    request<RankResponse>("/api/rank", { method: "POST", body: JSON.stringify({ tracks, mode, weights }) }),
+  rank: (tracks: Track[], mode: Mode, weights?: Weights, target?: TargetCurve) =>
+    request<RankResponse>("/api/rank", { method: "POST", body: JSON.stringify({ tracks, mode, weights, target }) }),
   startMix: (tracks: Track[], ordered_ids: string[]) =>
     request<{ mix_id: string; status: string }>("/api/mix", {
       method: "POST",

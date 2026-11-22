@@ -8,6 +8,7 @@ import {
   type MixStatus,
   type Mode,
   type RankResponse,
+  type TargetCurve,
   type Track,
   type TrackStage,
   type Weights,
@@ -454,6 +455,10 @@ export default function App() {
 
   const [mode, setMode] = useState<Mode>("daily");
   const [weights, setWeights] = useState<Weights>({ bpm: 20, key: 20, mood: 20, energy: 20, genre: 20 });
+  // user-drawn target curve (Custom mode only; kept while other modes are viewed)
+  const [target, setTarget] = useState<TargetCurve | null>(null);
+  const [curveStrength, setCurveStrength] = useState(0.7);
+  const rankSeq = useRef(0);
   const [ranking, setRanking] = useState<RankResponse | null>(null);
   const [rankError, setRankError] = useState<string | null>(null);
 
@@ -505,19 +510,32 @@ export default function App() {
     }
   };
 
-  // re-rank whenever tracks / mode / custom weights change (debounced for sliders)
+  // re-rank whenever tracks / mode / custom weights / target curve change (debounced for sliders & dragging)
   useEffect(() => {
     if (!tracks.length) return;
+    const seq = ++rankSeq.current;
     const handle = window.setTimeout(async () => {
       try {
         setRankError(null);
-        setRanking(await api.rank(tracks, mode, mode === "custom" ? weights : undefined));
+        const custom = mode === "custom";
+        const res = await api.rank(
+          tracks,
+          mode,
+          custom ? weights : undefined,
+          custom && target ? { ...target, strength: curveStrength } : undefined,
+        );
+        if (seq === rankSeq.current) setRanking(res); // ignore responses that arrive out of order
       } catch (e) {
-        setRankError((e as Error).message);
+        if (seq === rankSeq.current) setRankError((e as Error).message);
       }
-    }, mode === "custom" ? 250 : 0);
+    }, mode === "custom" ? 200 : 0);
     return () => window.clearTimeout(handle);
-  }, [tracks, mode, weights]);
+  }, [tracks, mode, weights, target, curveStrength]);
+
+  const onTarget = (t: TargetCurve | null) => {
+    setTarget(t);
+    if (t && mode !== "custom") setMode("custom"); // drawing a curve is a Custom-mode ranking
+  };
 
   const startMix = useCallback(async () => {
     if (!ranking) return;
@@ -628,7 +646,14 @@ export default function App() {
               <h2>Sıralama modu</h2>
               {ranking && (
                 <span className="score">
-                  Geçiş maliyeti <b>{ranking.score_before.toFixed(2)}</b> → <b className="good">{ranking.score_after.toFixed(2)}</b>
+                  {ranking.curve_error_after != null && mode === "custom" && (
+                    <span className="curve-score" title="Hedef eğriden ortalama sapma (0 = tam uyum, playlist aralığına göre)">
+                      Eğri sapması <b>{ranking.curve_error_before?.toFixed(2)}</b> →{" "}
+                      <b className="good">{ranking.curve_error_after.toFixed(2)}</b>
+                    </span>
+                  )}
+                  {ranking.curve_error_after != null ? "Toplam skor" : "Geçiş maliyeti"}{" "}
+                  <b>{ranking.score_before.toFixed(2)}</b> → <b className="good">{ranking.score_after.toFixed(2)}</b>
                   {ranking.kept_original ? (
                     <span className="muted"> (orijinal sıra zaten en iyisi)</span>
                   ) : (
@@ -672,7 +697,15 @@ export default function App() {
             {rankError && <div className="alert alert-error">{rankError}</div>}
             {ranking && (
               <>
-                <FlowChart original={tracks} ranked={ranked} breakdown={ranking.transition_breakdown} />
+                <FlowChart
+                  original={tracks}
+                  ranked={ranked}
+                  breakdown={ranking.transition_breakdown}
+                  target={mode === "custom" ? target : null}
+                  onTarget={onTarget}
+                  strength={curveStrength}
+                  onStrength={setCurveStrength}
+                />
                 <div className="orders">
                   <OrderList title="Orijinal sıra" tracks={tracks} />
                   <OrderList title="MoodFlow sırası" tracks={ranked} costs={ranking.transition_costs} />

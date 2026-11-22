@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Track, TransitionStep } from "./api";
+import type { CurveFeature, TargetCurve, Track, TransitionStep } from "./api";
 
 /* Original vs MoodFlow order, one metric at a time (one y-axis per chart, never two).
    Values: per position. Transition fit: per step, the 0..1 distance the ranker minimises. */
@@ -58,15 +58,44 @@ const SERIES = [
   { id: "mf", name: "MoodFlow", cls: "s-mf" },
 ] as const;
 
+const CONTROL_POINTS = 5;
+
+/** Same linear interpolation as the backend (ranking.interp_curve). */
+function interpCurve(points: number[], pos: number, n: number): number {
+  if (points.length === 1 || n <= 1) return points[0];
+  const xk = (pos / (n - 1)) * (points.length - 1);
+  const i = Math.min(Math.floor(xk), points.length - 2);
+  return points[i] + (points[i + 1] - points[i]) * (xk - i);
+}
+
+const PRESETS: { id: string; label: string; shape: number[] }[] = [
+  { id: "up", label: "↗ Yükselen", shape: [0, 0.25, 0.5, 0.75, 1] },
+  { id: "down", label: "↘ Alçalan", shape: [1, 0.75, 0.5, 0.25, 0] },
+  { id: "peak", label: "∩ Tepe", shape: [0, 0.6, 1, 0.6, 0] },
+  { id: "valley", label: "∪ Vadi", shape: [1, 0.4, 0, 0.4, 1] },
+  { id: "flat", label: "— Düz", shape: [0.5, 0.5, 0.5, 0.5, 0.5] },
+];
+
 export default function FlowChart({
   original,
   ranked,
   breakdown,
+  target,
+  onTarget,
+  strength,
+  onStrength,
 }: {
   original: Track[];
   ranked: Track[];
   breakdown?: { before: TransitionStep[]; after: TransitionStep[] };
+  /** active target curve (Custom mode), or null */
+  target: TargetCurve | null;
+  onTarget: (t: TargetCurve | null) => void;
+  strength: number;
+  onStrength: (s: number) => void;
 }) {
+  const svgRef = useRef<SVGSVGElement>(null);
+  const dragRef = useRef<number | null>(null);
   const [metricId, setMetricId] = useState("energy");
   const metric = METRICS.find((m) => m.id === metricId)!;
   const [boxRef, width] = useWidth<HTMLDivElement>();
@@ -134,6 +163,39 @@ export default function FlowChart({
     ends[1 - up]!.y = mid + 8;
   }
 
+  // ---- target curve (value metrics only)
+  const curveFeature: CurveFeature | null = metric.group === "value" ? (metric.id as CurveFeature) : null;
+  const showCurve = !!target && !!curveFeature && target.feature === curveFeature && values.length > 0;
+  const dataLo = values.length ? Math.min(...values) : 0;
+  const dataHi = values.length ? Math.max(...values) : 1;
+  const roundV = (v: number) => (curveFeature === "bpm" ? Math.round(v) : Math.round(v * 100) / 100);
+  const fromShape = (shape: number[]) => shape.map((s) => roundV(dataLo + s * (dataHi - dataLo)));
+  const setPoints = (points: number[]) => curveFeature && onTarget({ feature: curveFeature, points, strength });
+  const K = target?.points.length ?? CONTROL_POINTS;
+  const hx = (k: number) => pad.l + (K > 1 ? (k / (K - 1)) * iw : iw / 2);
+  const clampV = (v: number) => Math.min(d1, Math.max(d0, v));
+  const handleStep = curveFeature === "bpm" ? 1 : 0.01;
+
+  const onHandleDown = (k: number, e: React.PointerEvent<SVGCircleElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = k;
+    e.stopPropagation();
+  };
+  const onHandleMove = (e: React.PointerEvent<SVGCircleElement>) => {
+    const k = dragRef.current;
+    if (k == null || !target || !svgRef.current) return;
+    const py = e.clientY - svgRef.current.getBoundingClientRect().top;
+    const v = roundV(clampV(d0 + (1 - (py - pad.t) / ih) * (d1 - d0)));
+    if (v === target.points[k]) return;
+    setPoints(target.points.map((p, i) => (i === k ? v : p)));
+  };
+  const onHandleKey = (k: number, e: React.KeyboardEvent) => {
+    if (!target || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+    e.preventDefault();
+    const delta = (e.key === "ArrowUp" ? 1 : -1) * handleStep * (e.shiftKey ? 10 : 1);
+    setPoints(target.points.map((p, i) => (i === k ? roundV(clampV(p + delta)) : p)));
+  };
+
   const fmt = metric.group === "value" ? metric.fmt : fmt2;
   const xLabel = (i: number) => (metric.group === "value" ? `${i + 1}` : `${i + 1}→${i + 2}`);
   const xTickEvery = Math.ceil(n / Math.max(2, Math.floor(iw / 44)));
@@ -175,14 +237,63 @@ export default function FlowChart({
               <i className={`key ${s.cls}`} /> {s.name}
             </span>
           ))}
+          {showCurve && (
+            <span>
+              <i className="key s-target" /> Hedef
+            </span>
+          )}
         </span>
       </div>
+
+      {curveFeature && values.length > 0 && (
+        <div className="curve-bar">
+          {!showCurve ? (
+            <>
+              <button
+                className="chip-btn"
+                onClick={() => onTarget({ feature: curveFeature, points: fromShape(PRESETS[0].shape), strength })}
+              >
+                🎯 {metric.label} için hedef eğri çiz
+              </button>
+              {target && (
+                <span className="muted">
+                  Aktif hedef eğri: {METRICS.find((m) => m.id === target.feature)?.label} (görmek için o ölçüye geçin)
+                </span>
+              )}
+            </>
+          ) : (
+            <>
+              <span className="flow-group-label">Hedef eğri</span>
+              {PRESETS.map((p) => (
+                <button key={p.id} className="chip-btn" onClick={() => setPoints(fromShape(p.shape))}>
+                  {p.label}
+                </button>
+              ))}
+              <label className="strength" title="Düşük: geçişler yumuşak kalır, eğri yaklaşık izlenir. Yüksek: eğriye sadık, geçişler ikinci planda.">
+                Eğriye uyum
+                <input
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={Math.round(strength * 100)}
+                  onChange={(e) => onStrength(Number(e.target.value) / 100)}
+                />
+                <b>%{Math.round(strength * 100)}</b>
+              </label>
+              <button className="chip-btn" onClick={() => onTarget(null)}>
+                Kaldır
+              </button>
+              <span className="muted curve-help">Noktaları sürükleyin (veya seçip ↑/↓).</span>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="flow-plot" ref={boxRef}>
         {n === 0 || !values.length ? (
           <p className="muted small">Bu ölçü için veri yok.</p>
         ) : (
-          <svg width={width} height={H} role="img" aria-label={`${metric.hint}: orijinal ve MoodFlow sırası`}>
+          <svg ref={svgRef} width={width} height={H} role="img" aria-label={`${metric.hint}: orijinal ve MoodFlow sırası`}>
             {ticks.map((t) => (
               <g key={t}>
                 <line className="grid" x1={pad.l} x2={pad.l + iw} y1={y(t)} y2={y(t)} />
@@ -199,6 +310,18 @@ export default function FlowChart({
               ) : null,
             )}
             {hover != null && <line className="crosshair" x1={x(hover)} x2={x(hover)} y1={pad.t} y2={pad.t + ih} />}
+            {showCurve && (
+              <g className="target">
+                <polyline
+                  className="target-band"
+                  points={target!.points.map((v, k) => `${hx(k)},${y(clampV(v))}`).join(" ")}
+                />
+                <polyline
+                  className="target-line"
+                  points={target!.points.map((v, k) => `${hx(k)},${y(clampV(v))}`).join(" ")}
+                />
+              </g>
+            )}
             {SERIES.map((s, si) => (
               <g key={s.id} className={s.cls}>
                 <path d={paths[si]} className="line" />
@@ -228,6 +351,31 @@ export default function FlowChart({
               onBlur={() => setHover(null)}
               onKeyDown={onKey}
             />
+            {showCurve &&
+              target!.points.map((v, k) => (
+                <g key={k} className="handle">
+                  <circle className="handle-dot" cx={hx(k)} cy={y(clampV(v))} r={6} />
+                  <circle
+                    className="handle-hit"
+                    cx={hx(k)}
+                    cy={y(clampV(v))}
+                    r={13}
+                    tabIndex={0}
+                    role="slider"
+                    aria-label={`Hedef eğri noktası ${k + 1}`}
+                    aria-valuenow={v}
+                    aria-valuemin={d0}
+                    aria-valuemax={d1}
+                    onPointerDown={(e) => onHandleDown(k, e)}
+                    onPointerMove={onHandleMove}
+                    onPointerUp={() => (dragRef.current = null)}
+                    onPointerCancel={() => (dragRef.current = null)}
+                    onKeyDown={(e) => onHandleKey(k, e)}
+                  >
+                    <title>{`Hedef: ${fmt(v)}`}</title>
+                  </circle>
+                </g>
+              ))}
           </svg>
         )}
         {hover != null && values.length > 0 && (
@@ -249,6 +397,13 @@ export default function FlowChart({
                 </div>
               );
             })}
+            {showCurve && (
+              <div className="tip-row">
+                <i className="key s-target" />
+                <b>{fmt(interpCurve(target!.points, hover, n))}</b>
+                <span className="tip-name">Hedef</span>
+              </div>
+            )}
           </div>
         )}
       </div>

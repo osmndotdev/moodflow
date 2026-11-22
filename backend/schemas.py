@@ -61,10 +61,19 @@ class Weights(BaseModel):
     genre: float = 0
 
 
+class TargetCurve(BaseModel):
+    """User-drawn target for Custom mode: values in the feature's own units (BPM, 0..1 energy/valence),
+    as evenly spaced control points from the first to the last position of the order."""
+    feature: Literal["bpm", "energy", "valence"]
+    points: list[float] = Field(min_length=2, max_length=32)
+    strength: float = Field(0.7, ge=0, le=1)  # 0 = only smooth transitions, 1 = only fit the curve
+
+
 class RankRequest(BaseModel):
     tracks: list[Track]
     mode: Mode = "daily"
     weights: Weights | None = None
+    target: TargetCurve | None = None  # used in Custom mode only
 
 
 class RankResponse(BaseModel):
@@ -72,6 +81,8 @@ class RankResponse(BaseModel):
     score_before: float
     score_after: float
     kept_original: bool = False
+    curve_error_before: float | None = None
+    curve_error_after: float | None = None
     transition_costs: list[float] = []
     # per-step feature distances (0..1, null = not comparable) for the original and new order
     transition_breakdown: dict[str, list[dict[str, float | None]]] = {}

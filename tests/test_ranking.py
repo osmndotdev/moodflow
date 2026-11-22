@@ -101,3 +101,74 @@ def test_transition_breakdown_for_both_orders(sample_tracks):
     # the fixture's 9th track has no metadata → its transitions aren't comparable, not zero
     i = [t.occurrence_id for t in sample_tracks].index("item-009")
     assert bd["before"][i - 1]["bpm"] is None and bd["before"][i]["key"] is None
+
+
+# ------------------------------------------------------------------ user target curve (Custom mode)
+
+from backend.ranking import interp_curve  # noqa: E402
+from backend.schemas import TargetCurve  # noqa: E402
+
+
+def _bpms(res, tracks):
+    by_id = {t.occurrence_id: t.features.bpm for t in tracks}
+    return [by_id[i] for i in res["ordered_ids"]]
+
+
+def test_descending_bpm_curve_sorts_high_to_low():
+    tracks = [_t(i, bpm=b) for i, b in enumerate([100, 128, 90, 140, 115, 122, 96, 133])]
+    res = rank(tracks, "custom", Weights(bpm=1), TargetCurve(feature="bpm", points=[140, 90], strength=1))
+    assert _bpms(res, tracks) == sorted(_bpms(res, tracks), reverse=True)
+    assert res["curve_error_after"] < res["curve_error_before"]
+
+
+def test_peak_curve_puts_highest_energy_in_the_middle():
+    tracks = [_t(i, energy=e) for i, e in enumerate([0.9, 0.2, 0.5, 0.7, 0.3, 0.8, 0.4])]
+    res = rank(tracks, "custom", None, TargetCurve(feature="energy", points=[0.2, 0.9, 0.2], strength=1))
+    by_id = {t.occurrence_id: t.features.energy for t in tracks}
+    e = [by_id[i] for i in res["ordered_ids"]]
+    assert e[3] == 0.9 and e[0] < e[3] and e[-1] < e[3]
+
+
+def test_curve_strength_trades_fit_against_smooth_transitions():
+    tracks = [_t(i, bpm=b, camelot=c) for i, (b, c) in enumerate(
+        [(100, "8A"), (110, "3B"), (120, "8A"), (130, "3B"), (140, "8A"), (150, "3B")])]
+    curve = dict(feature="bpm", points=[100, 150])
+    loose = rank(tracks, "custom", Weights(key=1), TargetCurve(**curve, strength=0.05))
+    strict = rank(tracks, "custom", Weights(key=1), TargetCurve(**curve, strength=1))
+    assert strict["curve_error_after"] <= loose["curve_error_after"]
+    assert _bpms(strict, tracks) == [100, 110, 120, 130, 140, 150]
+
+
+def test_curve_ignored_outside_custom_mode_and_at_zero_strength():
+    tracks = [_t(i, bpm=b) for i, b in enumerate([100, 128, 90, 140, 115])]
+    curve = TargetCurve(feature="bpm", points=[140, 90], strength=1)
+    assert rank(tracks, "daily", None, curve) == rank(tracks, "daily")
+    zero = TargetCurve(feature="bpm", points=[140, 90], strength=0)
+    assert rank(tracks, "custom", Weights(bpm=1), zero)["curve_error_after"] is None
+
+
+def test_curve_with_missing_values_still_returns_every_track():
+    tracks = [_t(i, bpm=b) for i, b in enumerate([100, None, 140, 120, None, 90])]
+    res = rank(tracks, "custom", None, TargetCurve(feature="bpm", points=[90, 140], strength=1))
+    assert sorted(res["ordered_ids"]) == sorted(t.occurrence_id for t in tracks)
+    known = [b for b in _bpms(res, tracks) if b is not None]
+    assert known == sorted(known)
+
+
+def test_interp_curve():
+    assert interp_curve([0, 10], 0, 5) == 0 and interp_curve([0, 10], 4, 5) == 10
+    assert interp_curve([0, 10, 0], 2, 5) == 10 and interp_curve([0, 10, 0], 1, 5) == 5
+
+
+def test_rank_api_accepts_target():
+    from fastapi.testclient import TestClient
+
+    from backend.main import app
+
+    tracks = [_t(i, bpm=b).model_dump() for i, b in enumerate([100, 128, 90, 140])]
+    body = {"tracks": tracks, "mode": "custom", "weights": {"bpm": 1},
+            "target": {"feature": "bpm", "points": [140, 90], "strength": 1}}
+    res = TestClient(app).post("/api/rank", json=body).json()
+    assert res["ordered_ids"] == ["item-003", "item-001", "item-000", "item-002"]
+    bad = TestClient(app).post("/api/rank", json={**body, "target": {"feature": "key", "points": [1, 2]}})
+    assert bad.status_code == 422

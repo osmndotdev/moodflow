@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import random
 
-from .schemas import Features, Mode, Track, Weights
+from .schemas import Features, Mode, TargetCurve, Track, Weights
 
 FEATURES = ("bpm", "key", "mood", "energy", "genre")
 
@@ -135,37 +135,91 @@ def _normalise(values: list[float | None]) -> list[float | None]:
     return [None if v is None else (v - lo) / (hi - lo) for v in values]
 
 
+CURVE_FEATURES = ("bpm", "energy", "valence")  # numeric, ordered features a user curve can target
+
+
+def interp_curve(points: list[float], pos: int, n: int) -> float:
+    """Linear interpolation of evenly spaced control points at order position ``pos`` (0..n-1)."""
+    if len(points) == 1 or n <= 1:
+        return points[0]
+    x = pos / (n - 1) * (len(points) - 1)
+    i = min(int(x), len(points) - 2)
+    return points[i] + (points[i + 1] - points[i]) * (x - i)
+
+
 class Objective:
-    def __init__(self, tracks: list[Track], mode: Mode, weights: Weights | None):
+    """Mean transition cost, optionally blended with a curve term.
+
+    Curve term = mean |track value − target(position)|, both scaled to 0..1 by the playlist's
+    range of that value. Emotional mode uses a built-in calm → peak → calm intensity arc; a
+    user ``target`` curve (Custom mode) targets BPM, energy or valence directly.
+    """
+
+    def __init__(self, tracks: list[Track], mode: Mode, weights: Weights | None,
+                 target: TargetCurve | None = None):
         self.n = len(tracks)
         self.mode = mode
         w = resolve_weights(mode, weights)
         feats = [t.features for t in tracks]
         self.cost = [[transition_cost(feats[i], feats[j], w) if i != j else 0.0
                       for j in range(self.n)] for i in range(self.n)]
-        self.intensity = _normalise([_intensity(f) for f in feats])
+        self.curve_values: list[float | None] = [None] * self.n
+        self.curve_targets: list[float] = []
+        self.curve_share = 0.0
+        if target is not None and target.strength > 0 and len(target.points) >= 2:
+            raw = [getattr(f, target.feature) for f in feats]
+            known = [v for v in raw if v is not None]
+            if len(known) >= 2 and max(known) - min(known) > 1e-6:
+                lo, hi = min(known), max(known)
+                scale = lambda v: min(1.0, max(0.0, (v - lo) / (hi - lo)))  # noqa: E731
+                self.curve_values = [None if v is None else scale(v) for v in raw]
+                self.curve_targets = [scale(interp_curve(target.points, p, self.n)) for p in range(self.n)]
+                self.curve_share = min(1.0, target.strength)
+        elif mode == "emotional":
+            self.curve_values = _normalise([_intensity(f) for f in feats])
+            self.curve_targets = [target_curve(p, self.n) for p in range(self.n)]
+            self.curve_share = CURVE_SHARE
+        self.intensity = self.curve_values  # used for greedy start picks
+
+    @property
+    def has_curve(self) -> bool:
+        return self.curve_share > 0 and any(v is not None for v in self.curve_values)
 
     def curve_dev(self, track: int, pos: int) -> float | None:
-        if self.intensity[track] is None:
-            return None
-        return abs(self.intensity[track] - target_curve(pos, self.n))
+        v = self.curve_values[track]
+        return None if v is None or not self.curve_targets else abs(v - self.curve_targets[pos])
+
+    def curve_error(self, order: list[int]) -> float | None:
+        devs = [d for p, t in enumerate(order) if (d := self.curve_dev(t, p)) is not None]
+        return sum(devs) / len(devs) if devs else None
 
     def step_cost(self, cur: int, nxt: int, pos: int) -> float:
         """Greedy helper: cost of placing ``nxt`` at ``pos`` right after ``cur``."""
         c = self.cost[cur][nxt]
-        dev = self.curve_dev(nxt, pos) if self.mode == "emotional" else None
-        return c if dev is None else (1 - CURVE_SHARE) * c + CURVE_SHARE * dev
+        dev = self.curve_dev(nxt, pos) if self.has_curve else None
+        return c if dev is None else (1 - self.curve_share) * c + self.curve_share * dev
 
     def score(self, order: list[int]) -> float:
         if len(order) < 2:
             return 0.0
         trans = sum(self.cost[a][b] for a, b in zip(order, order[1:])) / (len(order) - 1)
-        if self.mode != "emotional":
-            return trans
-        devs = [d for p, t in enumerate(order) if (d := self.curve_dev(t, p)) is not None]
-        if not devs:
-            return trans
-        return (1 - CURVE_SHARE) * trans + CURVE_SHARE * (sum(devs) / len(devs))
+        err = self.curve_error(order) if self.has_curve else None
+        return trans if err is None else (1 - self.curve_share) * trans + self.curve_share * err
+
+    def curve_matching_order(self) -> list[int] | None:
+        """Sorted-to-sorted assignment of tracks to positions: the exact minimum of the curve
+        term alone (L1). Tracks without the value are treated as the median for placement."""
+        if not self.has_curve:
+            return None
+        known = sorted(v for v in self.curve_values if v is not None)
+        median = known[len(known) // 2]
+        by_value = sorted(range(self.n), key=lambda t: (self.curve_values[t] if self.curve_values[t] is not None
+                                                        else median, t))
+        by_target = sorted(range(self.n), key=lambda p: (self.curve_targets[p], p))
+        order = [0] * self.n
+        for track, pos in zip(by_value, by_target):
+            order[pos] = track
+        return order
 
 
 # --------------------------------------------------------------------------- optimizer
@@ -236,7 +290,8 @@ def transition_breakdown(order: list[Track], weights: dict[str, float]) -> list[
     return out
 
 
-def rank(tracks: list[Track], mode: Mode = "daily", weights: Weights | None = None) -> dict:
+def rank(tracks: list[Track], mode: Mode = "daily", weights: Weights | None = None,
+         target: TargetCurve | None = None) -> dict:
     n = len(tracks)
     ids = [t.occurrence_id for t in tracks]
     if n < 3:
@@ -245,21 +300,28 @@ def rank(tracks: list[Track], mode: Mode = "daily", weights: Weights | None = No
         return {"ordered_ids": ids, "score_before": 0.0, "score_after": 0.0, "kept_original": True,
                 "transition_costs": [s["total"] for s in steps],
                 "transition_breakdown": {"before": steps, "after": steps}}
-    obj = Objective(tracks, mode, weights)
+    obj = Objective(tracks, mode, weights, target if mode == "custom" else None)
     original = list(range(n))
     before = obj.score(original)
     best, best_score = original, before
-    for start in _start_indices(obj, tracks):
-        cand = _local_search(_greedy(start, obj), obj)
+    candidates = [_greedy(start, obj) for start in _start_indices(obj, tracks)]
+    if (matched := obj.curve_matching_order()) is not None:
+        candidates.insert(0, matched)
+    for start_order in candidates:
+        cand = _local_search(start_order, obj)
         s = obj.score(cand)
         if s < best_score - 1e-9:
             best, best_score = cand, s
     kept = best is original
+    err_before, err_after = (obj.curve_error(original), obj.curve_error(best)) if obj.has_curve else (None, None)
     return {
         "ordered_ids": [ids[i] for i in best],
         "score_before": round(before, 4),
         "score_after": round(best_score, 4),
         "kept_original": kept,
+        # mean distance to the curve (0 = exact fit), for a user target or the emotional arc
+        "curve_error_before": None if err_before is None else round(err_before, 4),
+        "curve_error_after": None if err_after is None else round(err_after, 4),
         "transition_costs": [round(obj.cost[a][b], 3) for a, b in zip(best, best[1:])],
         "transition_breakdown": {
             "before": transition_breakdown(tracks, resolve_weights(mode, weights)),

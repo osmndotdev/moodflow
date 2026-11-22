@@ -889,3 +889,78 @@ a.prov {
 .api-usage {
   margin: 0 0 10px;
 }
+
+/* target curve editor (reference mark, not data: violet band + handles) */
+.flow {
+  --target: #a46bff;
+}
+.key.s-target {
+  height: 6px;
+  border-radius: 3px;
+  background: color-mix(in oklab, var(--target) 45%, transparent);
+  box-shadow: inset 0 0 0 1px var(--target);
+}
+.curve-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin: 2px 0 6px;
+  font-size: 12.5px;
+}
+.curve-help {
+  font-size: 12px;
+}
+.strength {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 4px 0 8px;
+  color: var(--muted);
+}
+.strength input {
+  accent-color: var(--target);
+  width: 110px;
+}
+.strength b {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  min-width: 36px;
+}
+.flow-plot .target-band {
+  fill: none;
+  stroke: var(--target);
+  stroke-opacity: 0.22;
+  stroke-width: 12;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.flow-plot .target-line {
+  fill: none;
+  stroke: var(--target);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+.flow-plot .handle-dot {
+  fill: var(--target);
+  stroke: var(--bg-2);
+  stroke-width: 2;
+  pointer-events: none;
+}
+.flow-plot .handle-hit {
+  fill: transparent;
+  cursor: ns-resize;
+  touch-action: none;
+  outline: none;
+}
+.flow-plot .handle:hover .handle-dot,
+.flow-plot .handle:focus-within .handle-dot {
+  r: 8;
+}
+.flow-plot .handle-hit:focus-visible {
+  stroke: var(--text);
+  stroke-width: 1.5;
+}
+.curve-score {
+  margin-right: 10px;
+}

@@ -102,7 +102,7 @@ def api_import(req: ImportRequest) -> ImportResponse:
 def api_rank(req: RankRequest) -> RankResponse:
     if not req.tracks:
         raise HTTPException(status_code=422, detail="Sıralanacak şarkı yok.")
-    return RankResponse(**rank(req.tracks, req.mode, req.weights))
+    return RankResponse(**rank(req.tracks, req.mode, req.weights, req.target))
 
 
 # --------------------------------------------------------------------------- mix pipeline
