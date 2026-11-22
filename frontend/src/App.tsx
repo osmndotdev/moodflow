@@ -47,6 +47,7 @@ import {
   type Weights,
 } from "./api";
 import FlowChart from "./FlowChart";
+import WeightBar from "./WeightBar";
 
 const EXAMPLES: { platform: Platform; label: string; url: string }[] = [
   { platform: "youtube", label: "80s Synth-Pop", url: "https://www.youtube.com/playlist?list=PLGBuKfnErZlAKsNDquW0QoEYZle-NMmDL" },
@@ -78,14 +79,6 @@ const MODES: { id: Mode; label: string; hint: string; icon: IconType }[] = [
   { id: "emotional", label: "Emotional", hint: "Sakin → zirve → sakin", icon: LuHeartPulse },
   { id: "custom", label: "Custom", hint: "Ağırlıkları sen seç", icon: LuSlidersHorizontal },
 ];
-
-const FEATURE_LABELS: Record<keyof Weights, string> = {
-  bpm: "BPM",
-  key: "Key",
-  mood: "Mood",
-  energy: "Energy",
-  genre: "Genre",
-};
 
 const STAGE_ICON: Partial<Record<TrackStage, IconType>> = {
   waiting: LuMinus,
@@ -971,24 +964,7 @@ export default function App() {
                 </button>
               ))}
             </div>
-            {mode === "custom" && (
-              <div className="sliders">
-                {(Object.keys(FEATURE_LABELS) as (keyof Weights)[]).map((k) => (
-                  <label key={k}>
-                    <span>
-                      {FEATURE_LABELS[k]} <b>{weights[k]}</b>
-                    </span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={100}
-                      value={weights[k]}
-                      onChange={(e) => setWeights({ ...weights, [k]: Number(e.target.value) })}
-                    />
-                  </label>
-                ))}
-              </div>
-            )}
+            {mode === "custom" && <WeightBar weights={weights} onChange={setWeights} />}
             {rankError && <div className="alert alert-error">{rankError}</div>}
             {ranking && (
               <>
