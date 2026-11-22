@@ -142,6 +142,16 @@ function Chips({ items, kind }: { items: string[] | null; kind: "mood" | "genre"
 }
 
 const PLATFORM_LABEL: Record<Platform, string> = { youtube: "YouTube", spotify: "Spotify", apple: "Apple Music" };
+const PLATFORMS: Platform[] = ["youtube", "spotify", "apple"];
+
+/** Which supported platform a typed URL points at, if any (used to highlight its icon). */
+function urlPlatform(url: string): Platform | null {
+  const u = url.toLowerCase();
+  if (/(^|[./])(youtube\.com|youtu\.be)/.test(u)) return "youtube";
+  if (/(^|[./])spotify\.com/.test(u)) return "spotify";
+  if (/(^|[./])music\.apple\.com/.test(u)) return "apple";
+  return null;
+}
 
 function PlatformBadge({ platform }: { platform: Platform }) {
   const Icon = PLATFORM_ICON[platform];
@@ -888,6 +898,20 @@ export default function App() {
             doImport();
           }}
         >
+          <span className="url-platforms" role="img" aria-label="Desteklenen platformlar: YouTube, Spotify, Apple Music">
+            {PLATFORMS.map((p) => {
+              const Icon = PLATFORM_ICON[p];
+              const typed = urlPlatform(url);
+              return (
+                <Icon
+                  key={p}
+                  className={`url-pf-${p} ${typed && typed !== p ? "dim" : ""}`}
+                  title={PLATFORM_LABEL[p]}
+                  aria-hidden="true"
+                />
+              );
+            })}
+          </span>
           <input
             type="url"
             placeholder="Herkese açık YouTube, Spotify veya Apple Music playlist URL'si"

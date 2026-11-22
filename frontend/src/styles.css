@@ -159,6 +159,29 @@ code {
   display: flex;
   gap: 10px;
 }
+.url-platforms {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 4px;
+}
+.url-platforms svg {
+  width: 20px;
+  height: 20px;
+  transition: opacity 0.15s ease;
+}
+.url-platforms svg.dim {
+  opacity: 0.25;
+}
+.url-platforms .url-pf-youtube {
+  color: #ff3d3d;
+}
+.url-platforms .url-pf-spotify {
+  color: #1ed760;
+}
+.url-platforms .url-pf-apple {
+  color: #fa2d48;
+}
 .url-form input {
   flex: 1;
   min-width: 0;
