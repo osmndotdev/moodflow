@@ -10,7 +10,8 @@ No login, no OAuth, nothing is written back to YouTube/Spotify, no uploads.
 
 ## Requirements
 
-- Python 3.11+ (tested on 3.12), Node 18+ (tested on 24)
+- Python 3.11+ (tested on 3.12 and 3.14: the full test suite and a live import → rank → mix give identical
+  results on both; every dependency installs from prebuilt wheels on 3.14), Node 18+ (tested on 24)
 - `ffmpeg` and `ffprobe` on `PATH` (`brew install ffmpeg`)
 - Internet access (YouTube, Spotify embed page, feature APIs)
 - **API keys (server-side, developer-owned; no end-user auth):** copy `.env.example` → `.env` and fill in
@@ -25,7 +26,7 @@ No login, no OAuth, nothing is written back to YouTube/Spotify, no uploads.
 ## Run
 
 ```bash
-python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 ```
 
 ```bash
