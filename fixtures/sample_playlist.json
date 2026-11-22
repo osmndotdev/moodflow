@@ -1,0 +1,374 @@
+{
+  "playlist_title": "Fixture: 80s synthpop",
+  "platform": "youtube",
+  "tracks": [
+    {
+      "occurrence_id": "item-001",
+      "platform": "youtube",
+      "source_id": "vid00000001",
+      "title": "Take On Me",
+      "artist": "a-ha",
+      "duration_sec": 225,
+      "original_position": 1,
+      "features": {
+        "bpm": 169,
+        "camelot": "11B",
+        "mood": [
+          "energetic",
+          "happy"
+        ],
+        "valence": 0.78,
+        "energy": 0.74,
+        "genre": [
+          "Pop"
+        ],
+        "bpm_alt": null,
+        "bpm_confidence": null,
+        "key": null,
+        "key_confidence": null,
+        "sources": {
+          "bpm": "fixture",
+          "key": "fixture",
+          "mood": "fixture",
+          "energy": "fixture",
+          "genre": "fixture"
+        },
+        "missing_features": []
+      },
+      "youtube_video_id": "vid00000001",
+      "match_status": "matched",
+      "source_url": null
+    },
+    {
+      "occurrence_id": "item-002",
+      "platform": "youtube",
+      "source_id": "vid00000002",
+      "title": "Everybody Wants To Rule The World",
+      "artist": "Tears For Fears",
+      "duration_sec": 251,
+      "original_position": 2,
+      "features": {
+        "bpm": 112,
+        "camelot": "10B",
+        "mood": [
+          "chill",
+          "warm"
+        ],
+        "valence": 0.7,
+        "energy": 0.6,
+        "genre": [
+          "Pop",
+          "Rock"
+        ],
+        "bpm_alt": null,
+        "bpm_confidence": null,
+        "key": null,
+        "key_confidence": null,
+        "sources": {
+          "bpm": "fixture",
+          "key": "fixture",
+          "mood": "fixture",
+          "energy": "fixture",
+          "genre": "fixture"
+        },
+        "missing_features": []
+      },
+      "youtube_video_id": "vid00000002",
+      "match_status": "matched",
+      "source_url": null
+    },
+    {
+      "occurrence_id": "item-003",
+      "platform": "youtube",
+      "source_id": "vid00000003",
+      "title": "Enjoy the Silence",
+      "artist": "Depeche Mode",
+      "duration_sec": 261,
+      "original_position": 3,
+      "features": {
+        "bpm": 113,
+        "camelot": "7A",
+        "mood": [
+          "melancholic",
+          "calm"
+        ],
+        "valence": 0.35,
+        "energy": 0.55,
+        "genre": [
+          "Synthpop"
+        ],
+        "bpm_alt": null,
+        "bpm_confidence": null,
+        "key": null,
+        "key_confidence": null,
+        "sources": {
+          "bpm": "fixture",
+          "key": "fixture",
+          "mood": "fixture",
+          "energy": "fixture",
+          "genre": "fixture"
+        },
+        "missing_features": []
+      },
+      "youtube_video_id": "vid00000003",
+      "match_status": "matched",
+      "source_url": null
+    },
+    {
+      "occurrence_id": "item-004",
+      "platform": "youtube",
+      "source_id": "vid00000004",
+      "title": "Sweet Dreams (Are Made Of This)",
+      "artist": "Eurythmics",
+      "duration_sec": 216,
+      "original_position": 4,
+      "features": {
+        "bpm": 126,
+        "camelot": "8A",
+        "mood": [
+          "intense",
+          "dark"
+        ],
+        "valence": 0.4,
+        "energy": 0.7,
+        "genre": [
+          "Synthpop"
+        ],
+        "bpm_alt": null,
+        "bpm_confidence": null,
+        "key": null,
+        "key_confidence": null,
+        "sources": {
+          "bpm": "fixture",
+          "key": "fixture",
+          "mood": "fixture",
+          "energy": "fixture",
+          "genre": "fixture"
+        },
+        "missing_features": []
+      },
+      "youtube_video_id": "vid00000004",
+      "match_status": "matched",
+      "source_url": null
+    },
+    {
+      "occurrence_id": "item-005",
+      "platform": "youtube",
+      "source_id": "vid00000005",
+      "title": "Smalltown Boy",
+      "artist": "Bronski Beat",
+      "duration_sec": 302,
+      "original_position": 5,
+      "features": {
+        "bpm": 135,
+        "camelot": "7A",
+        "mood": [
+          "melancholic",
+          "calm"
+        ],
+        "valence": 0.3,
+        "energy": 0.65,
+        "genre": [
+          "Synthpop",
+          "Dance"
+        ],
+        "bpm_alt": null,
+        "bpm_confidence": null,
+        "key": null,
+        "key_confidence": null,
+        "sources": {
+          "bpm": "fixture",
+          "key": "fixture",
+          "mood": "fixture",
+          "energy": "fixture",
+          "genre": "fixture"
+        },
+        "missing_features": []
+      },
+      "youtube_video_id": "vid00000005",
+      "match_status": "matched",
+      "source_url": null
+    },
+    {
+      "occurrence_id": "item-006",
+      "platform": "youtube",
+      "source_id": "vid00000006",
+      "title": "West End Girls",
+      "artist": "Pet Shop Boys",
+      "duration_sec": 281,
+      "original_position": 6,
+      "features": {
+        "bpm": 113,
+        "camelot": "8A",
+        "mood": [
+          "intense",
+          "dark"
+        ],
+        "valence": 0.45,
+        "energy": 0.58,
+        "genre": [
+          "Synthpop"
+        ],
+        "bpm_alt": null,
+        "bpm_confidence": null,
+        "key": null,
+        "key_confidence": null,
+        "sources": {
+          "bpm": "fixture",
+          "key": "fixture",
+          "mood": "fixture",
+          "energy": "fixture",
+          "genre": "fixture"
+        },
+        "missing_features": []
+      },
+      "youtube_video_id": "vid00000006",
+      "match_status": "matched",
+      "source_url": null
+    },
+    {
+      "occurrence_id": "item-007",
+      "platform": "youtube",
+      "source_id": "vid00000007",
+      "title": "Forever Young",
+      "artist": "Alphaville",
+      "duration_sec": 226,
+      "original_position": 7,
+      "features": {
+        "bpm": 70,
+        "camelot": "10B",
+        "mood": [
+          "melancholic",
+          "calm"
+        ],
+        "valence": 0.4,
+        "energy": 0.35,
+        "genre": [
+          "Synthpop"
+        ],
+        "bpm_alt": null,
+        "bpm_confidence": null,
+        "key": null,
+        "key_confidence": null,
+        "sources": {
+          "bpm": "fixture",
+          "key": "fixture",
+          "mood": "fixture",
+          "energy": "fixture",
+          "genre": "fixture"
+        },
+        "missing_features": []
+      },
+      "youtube_video_id": "vid00000007",
+      "match_status": "matched",
+      "source_url": null
+    },
+    {
+      "occurrence_id": "item-008",
+      "platform": "youtube",
+      "source_id": "vid00000008",
+      "title": "You Spin Me Round (Like a Record)",
+      "artist": "Dead Or Alive",
+      "duration_sec": 197,
+      "original_position": 8,
+      "features": {
+        "bpm": 129,
+        "camelot": "11A",
+        "mood": [
+          "energetic",
+          "happy"
+        ],
+        "valence": 0.72,
+        "energy": 0.85,
+        "genre": [
+          "Dance",
+          "Pop"
+        ],
+        "bpm_alt": null,
+        "bpm_confidence": null,
+        "key": null,
+        "key_confidence": null,
+        "sources": {
+          "bpm": "fixture",
+          "key": "fixture",
+          "mood": "fixture",
+          "energy": "fixture",
+          "genre": "fixture"
+        },
+        "missing_features": []
+      },
+      "youtube_video_id": "vid00000008",
+      "match_status": "matched",
+      "source_url": null
+    },
+    {
+      "occurrence_id": "item-009",
+      "platform": "youtube",
+      "source_id": "vid00000009",
+      "title": "Track With No Metadata",
+      "artist": "Example Artist",
+      "duration_sec": 200,
+      "original_position": 9,
+      "features": {
+        "bpm": null,
+        "camelot": null,
+        "mood": null,
+        "valence": null,
+        "energy": null,
+        "genre": null,
+        "bpm_alt": null,
+        "bpm_confidence": null,
+        "key": null,
+        "key_confidence": null,
+        "sources": {},
+        "missing_features": [
+          "bpm",
+          "key",
+          "mood",
+          "energy",
+          "genre"
+        ]
+      },
+      "youtube_video_id": "vid00000009",
+      "match_status": "matched",
+      "source_url": null
+    },
+    {
+      "occurrence_id": "item-010",
+      "platform": "youtube",
+      "source_id": "vid00000010",
+      "title": "Take On Me",
+      "artist": "a-ha",
+      "duration_sec": 225,
+      "original_position": 10,
+      "features": {
+        "bpm": 169,
+        "camelot": "11B",
+        "mood": [
+          "energetic",
+          "happy"
+        ],
+        "valence": 0.78,
+        "energy": 0.74,
+        "genre": [
+          "Pop"
+        ],
+        "bpm_alt": null,
+        "bpm_confidence": null,
+        "key": null,
+        "key_confidence": null,
+        "sources": {
+          "bpm": "fixture",
+          "key": "fixture",
+          "mood": "fixture",
+          "energy": "fixture",
+          "genre": "fixture"
+        },
+        "missing_features": []
+      },
+      "youtube_video_id": "vid00000010",
+      "match_status": "matched",
+      "source_url": null
+    }
+  ]
+}
