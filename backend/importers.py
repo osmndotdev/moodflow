@@ -3,6 +3,7 @@ Apple Music via the public playlist page."""
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 from urllib.parse import parse_qs, urlparse
@@ -13,7 +14,7 @@ from yt_dlp.utils import DownloadError
 
 from .schemas import Platform, Track
 
-MAX_ITEMS = 20
+MAX_ITEMS = max(2, int(os.getenv("MOODFLOW_MAX_TRACKS", 50)))  # playlist items read per import
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/130.0 Safari/537.36"
@@ -181,7 +182,7 @@ class SpotifyPublicAdapter:
     """Reads a public playlist from Spotify's embed page (no OAuth, no API key).
 
     The embed page ships the first ~50-100 tracks as JSON in ``__NEXT_DATA__``.
-    That's plenty for the 20-item demo limit.
+    That covers the 50-item default limit.
     """
 
     EMBED_URL = "https://open.spotify.com/embed/playlist/{id}"

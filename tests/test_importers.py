@@ -71,10 +71,13 @@ def test_import_youtube_skips_unavailable_items():
     assert len(res.warnings) == 1
 
 
-def test_import_youtube_limit_20():
+def test_import_youtube_limit():
+    from backend.importers import MAX_ITEMS
+
     class Y(FakeYDL):
-        info = {"entries": [{"id": f"vid{i:08d}", "title": f"A - Song {i}"} for i in range(30)]}
-    assert len(import_youtube("PLtest12345", ydl_cls=Y).tracks) == 20
+        info = {"entries": [{"id": f"vid{i:08d}", "title": f"A - Song {i}"} for i in range(80)]}
+    assert MAX_ITEMS == 50
+    assert len(import_youtube("PLtest12345", ydl_cls=Y).tracks) == 50
 
 
 def test_import_youtube_error_ignores_words_in_list_id():
@@ -189,10 +192,10 @@ def test_apple_adapter_parses_page():
     assert len(res.warnings) == 2
 
 
-def test_apple_adapter_limit_20():
-    items = [_apple_item(f"Song {i}", "A", str(1000 + i)) for i in range(40)]
+def test_apple_adapter_limit():
+    items = [_apple_item(f"Song {i}", "A", str(1000 + i)) for i in range(80)]
     client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, text=_apple_html(items))))
-    assert len(AppleMusicPublicAdapter(client).fetch("us/pl.abcdefgh12345").tracks) == 20
+    assert len(AppleMusicPublicAdapter(client).fetch("us/pl.abcdefgh12345").tracks) == 50
 
 
 @pytest.mark.parametrize("status,body", [(404, ""), (200, "<html>no data</html>"), (200, _apple_html([]))])

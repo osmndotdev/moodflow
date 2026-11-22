@@ -235,33 +235,95 @@ def _greedy(start: int, obj: Objective) -> list[int]:
 
 
 def _local_search(order: list[int], obj: Objective, max_rounds: int = 50, lo: int = 0) -> list[int]:
-    """Swap/relocate improvement; positions before ``lo`` are fixed (a pinned first song)."""
-    best, best_score = order[:], obj.score(order)
+    """Swap/relocate first-improvement search; positions before ``lo`` are fixed (a pinned first song).
+
+    Moves are scored incrementally (only the edges a move touches, plus prefix sums for the curve
+    term of the songs it shifts), so a 50-track playlist stays interactive. The scan order and the
+    acceptance rule are the same as a full re-score, so the same moves are taken.
+    """
     n = len(order)
+    if n - lo < 2:
+        return order[:]
+    C = obj.cost
+    curve = obj.has_curve
+    share = obj.curve_share if curve else 0.0
+    wt = (1 - share) / (n - 1)
+    known = sum(v is not None for v in obj.curve_values) if curve else 0
+    wc = share / known if curve and known else 0.0
+    # D[t][p]: curve deviation of track t at position p (0 for tracks without the value)
+    D = [[(obj.curve_dev(t, p) or 0.0) for p in range(n)] for t in range(n)] if wc else None
+
+    o = order[:]
+
+    def prefixes():
+        # L[p]: sum of D-changes if songs at 1..p shift one step left; R likewise for right shifts
+        L = [0.0] * (n + 1)
+        R = [0.0] * (n + 1)
+        for p in range(n):
+            left = D[o[p]][p - 1] - D[o[p]][p] if p >= 1 else 0.0
+            right = D[o[p]][p + 1] - D[o[p]][p] if p <= n - 2 else 0.0
+            L[p + 1] = L[p] + left
+            R[p + 1] = R[p] + right
+        return L, R
+
+    L, R = prefixes() if D else (None, None)
+
+    def edge(x, y):
+        return C[x][y]
+
+    def swap_delta(i, j):  # i < j
+        oi, oj = o[i], o[j]
+        if j == i + 1:
+            old = (edge(o[i - 1], oi) if i > 0 else 0) + edge(oi, oj) + (edge(oj, o[j + 1]) if j < n - 1 else 0)
+            new = (edge(o[i - 1], oj) if i > 0 else 0) + edge(oj, oi) + (edge(oi, o[j + 1]) if j < n - 1 else 0)
+        else:
+            old = ((edge(o[i - 1], oi) if i > 0 else 0) + edge(oi, o[i + 1])
+                   + edge(o[j - 1], oj) + (edge(oj, o[j + 1]) if j < n - 1 else 0))
+            new = ((edge(o[i - 1], oj) if i > 0 else 0) + edge(oj, o[i + 1])
+                   + edge(o[j - 1], oi) + (edge(oi, o[j + 1]) if j < n - 1 else 0))
+        d = wt * (new - old)
+        if D:
+            d += wc * (D[oj][i] + D[oi][j] - D[oi][i] - D[oj][j])
+        return d
+
+    def relocate_delta(i, j):  # move o[i] to index j of the list without it
+        x = o[i]
+        prv = o[i - 1] if i > 0 else None
+        nxt = o[i + 1] if i < n - 1 else None
+        old = (edge(prv, x) if prv is not None else 0) + (edge(x, nxt) if nxt is not None else 0)
+        new = edge(prv, nxt) if prv is not None and nxt is not None else 0
+        if i < j:  # lands between o[j] and o[j+1]
+            a, b = o[j], (o[j + 1] if j < n - 1 else None)
+        else:      # lands between o[j-1] and o[j]
+            a, b = (o[j - 1] if j > 0 else None), o[j]
+        old += edge(a, b) if a is not None and b is not None else 0
+        new += (edge(a, x) if a is not None else 0) + (edge(x, b) if b is not None else 0)
+        d = wt * (new - old)
+        if D:
+            shifted = (L[j + 1] - L[i + 1]) if i < j else (R[i] - R[j])
+            d += wc * (D[x][j] - D[x][i] + shifted)
+        return d
+
     for _ in range(max_rounds):
         improved = False
         for i in range(lo, n):
             for j in range(lo, n):
                 if i == j:
                     continue
-                # swap
-                if i < j:
-                    cand = best[:]
-                    cand[i], cand[j] = cand[j], cand[i]
-                    s = obj.score(cand)
-                    if s < best_score - 1e-9:
-                        best, best_score, improved = cand, s, True
-                        continue
-                # relocate i → j
-                cand = best[:]
-                item = cand.pop(i)
-                cand.insert(j, item)
-                s = obj.score(cand)
-                if s < best_score - 1e-9:
-                    best, best_score, improved = cand, s, True
+                if i < j and swap_delta(i, j) < -1e-9:
+                    o[i], o[j] = o[j], o[i]
+                    improved = True
+                    if D:
+                        L, R = prefixes()
+                    continue
+                if relocate_delta(i, j) < -1e-9:
+                    o.insert(j, o.pop(i))
+                    improved = True
+                    if D:
+                        L, R = prefixes()
         if not improved:
             break
-    return best
+    return o
 
 
 def _start_indices(obj: Objective, tracks: list[Track], k: int = 5) -> list[int]:

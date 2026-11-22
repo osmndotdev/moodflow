@@ -920,7 +920,7 @@ export default function App() {
         <ProviderStatus health={health} />
         {importing && (
           <p className="muted small loading-line">
-            <EqBars /> Şarkılar okunuyor ve BPM / Key / Mood / Energy / Genre analiz ediliyor (≈10–30 sn)…
+            <EqBars /> Şarkılar okunuyor ve BPM / Key / Mood / Energy / Genre analiz ediliyor (≈10–60 sn; tekrar okumalar önbellekten hızlı gelir)…
           </p>
         )}
         {importError && <div className="alert alert-error">{importError}</div>}
