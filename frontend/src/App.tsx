@@ -1,4 +1,35 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { IconType } from "react-icons";
+import {
+  LuActivity,
+  LuArrowRight,
+  LuAudioWaveform,
+  LuBlend,
+  LuCheck,
+  LuCircleCheck,
+  LuCircleHelp,
+  LuCircleMinus,
+  LuCircleX,
+  LuDisc3,
+  LuDownload,
+  LuHeartPulse,
+  LuKeyboardMusic,
+  LuListMusic,
+  LuListOrdered,
+  LuMinus,
+  LuPiggyBank,
+  LuPin,
+  LuScissors,
+  LuSearch,
+  LuSlidersHorizontal,
+  LuSmile,
+  LuSun,
+  LuTags,
+  LuTriangleAlert,
+  LuWandSparkles,
+  LuZap,
+} from "react-icons/lu";
+import { SiApplemusic, SiSpotify, SiYoutube } from "react-icons/si";
 import {
   api,
   type FeatureName,
@@ -17,20 +48,35 @@ import {
 } from "./api";
 import FlowChart from "./FlowChart";
 
-const EXAMPLES = [
-  { label: "YouTube · 80s Synth-Pop", url: "https://www.youtube.com/playlist?list=PLGBuKfnErZlAKsNDquW0QoEYZle-NMmDL" },
-  { label: "Spotify · Today's Top Hits", url: "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M" },
+const EXAMPLES: { platform: Platform; label: string; url: string }[] = [
+  { platform: "youtube", label: "80s Synth-Pop", url: "https://www.youtube.com/playlist?list=PLGBuKfnErZlAKsNDquW0QoEYZle-NMmDL" },
+  { platform: "spotify", label: "Today's Top Hits", url: "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M" },
   {
-    label: "Apple Music · Today's Hits",
+    platform: "apple",
+    label: "Today's Hits",
     url: "https://music.apple.com/us/playlist/todays-hits/pl.f4d106fed2bd41149aaacabb233eb5eb",
   },
 ];
 
-const MODES: { id: Mode; label: string; hint: string }[] = [
-  { id: "daily", label: "Daily", hint: "Genel uyum ve tür sürekliliği" },
-  { id: "dj", label: "DJ Mix", hint: "Tempo + harmonik geçişler" },
-  { id: "emotional", label: "Emotional", hint: "Sakin → zirve → sakin" },
-  { id: "custom", label: "Custom", hint: "Ağırlıkları sen seç" },
+const PLATFORM_ICON: Record<Platform, IconType> = { youtube: SiYoutube, spotify: SiSpotify, apple: SiApplemusic };
+
+/** Little animated equalizer: the logo mark and our loading indicator. */
+function EqBars({ playing = true, className = "" }: { playing?: boolean; className?: string }) {
+  return (
+    <span className={`eq ${playing ? "eq-on" : ""} ${className}`} aria-hidden="true">
+      <i />
+      <i />
+      <i />
+      <i />
+    </span>
+  );
+}
+
+const MODES: { id: Mode; label: string; hint: string; icon: IconType }[] = [
+  { id: "daily", label: "Daily", hint: "Genel uyum ve tür sürekliliği", icon: LuSun },
+  { id: "dj", label: "DJ Mix", hint: "Tempo + harmonik geçişler", icon: LuDisc3 },
+  { id: "emotional", label: "Emotional", hint: "Sakin → zirve → sakin", icon: LuHeartPulse },
+  { id: "custom", label: "Custom", hint: "Ağırlıkları sen seç", icon: LuSlidersHorizontal },
 ];
 
 const FEATURE_LABELS: Record<keyof Weights, string> = {
@@ -39,6 +85,14 @@ const FEATURE_LABELS: Record<keyof Weights, string> = {
   mood: "Mood",
   energy: "Energy",
   genre: "Genre",
+};
+
+const STAGE_ICON: Partial<Record<TrackStage, IconType>> = {
+  waiting: LuMinus,
+  ready: LuCircleCheck,
+  unmatched: LuCircleHelp,
+  failed: LuCircleX,
+  skipped: LuCircleMinus,
 };
 
 const STAGE_LABEL: Record<TrackStage, string> = {
@@ -53,11 +107,11 @@ const STAGE_LABEL: Record<TrackStage, string> = {
 };
 
 const PIPELINE = [
-  { key: "sourcing", label: "İndirme" },
-  { key: "analysis", label: "Ses analizi" },
-  { key: "arranging", label: "Bölüm seçimi" },
-  { key: "transitions", label: "Geçiş" },
-  { key: "rendering", label: "Render" },
+  { key: "sourcing", label: "İndirme", icon: LuDownload },
+  { key: "analysis", label: "Ses analizi", icon: LuAudioWaveform },
+  { key: "arranging", label: "Bölüm seçimi", icon: LuScissors },
+  { key: "transitions", label: "Geçiş", icon: LuBlend },
+  { key: "rendering", label: "Render", icon: LuDisc3 },
 ] as const;
 
 const fmtTime = (s: number | null | undefined) => {
@@ -97,7 +151,12 @@ function Chips({ items, kind }: { items: string[] | null; kind: "mood" | "genre"
 const PLATFORM_LABEL: Record<Platform, string> = { youtube: "YouTube", spotify: "Spotify", apple: "Apple Music" };
 
 function PlatformBadge({ platform }: { platform: Platform }) {
-  return <span className={`badge badge-${platform}`}>{PLATFORM_LABEL[platform]}</span>;
+  const Icon = PLATFORM_ICON[platform];
+  return (
+    <span className={`badge badge-${platform}`}>
+      <Icon aria-hidden="true" /> {PLATFORM_LABEL[platform]}
+    </span>
+  );
 }
 
 const PROVIDER_LABEL: Record<string, string> = {
@@ -175,7 +234,7 @@ function ApiUsage({ usage }: { usage?: Record<string, { calls: number; cached: n
   if (!rows.length) return null;
   return (
     <p className="muted small api-usage" title="Daha önce alınan yanıtlar önbellekten gelir; API kredisi harcanmaz.">
-      Bu okumada API kullanımı:{" "}
+      <LuPiggyBank className="inline-ic" aria-hidden="true" /> Bu okumada API kullanımı:{" "}
       {rows.map(([name, u], i) => (
         <span key={name}>
           {i > 0 && " · "}
@@ -196,11 +255,21 @@ function TrackTable({ tracks, excluded }: { tracks: Track[]; excluded?: Set<stri
           <tr>
             <th>#</th>
             <th>Şarkı</th>
-            <th>BPM</th>
-            <th>Key</th>
-            <th>Mood</th>
-            <th>Energy</th>
-            <th>Genre</th>
+            <th>
+              <LuActivity className="th-ic" aria-hidden="true" /> BPM
+            </th>
+            <th>
+              <LuKeyboardMusic className="th-ic" aria-hidden="true" /> Key
+            </th>
+            <th>
+              <LuSmile className="th-ic" aria-hidden="true" /> Mood
+            </th>
+            <th>
+              <LuZap className="th-ic" aria-hidden="true" /> Energy
+            </th>
+            <th>
+              <LuTags className="th-ic" aria-hidden="true" /> Genre
+            </th>
             <th title="Bulunamayan özellik sayısı">Eksik</th>
           </tr>
         </thead>
@@ -278,10 +347,10 @@ function TrackTable({ tracks, excluded }: { tracks: Track[]; excluded?: Set<stri
 
 /* ------------------------------------------------------------------ ordering */
 
-function transitionQuality(total: number): { cls: string; label: string } {
-  if (total < 0.2) return { cls: "good", label: "Akıcı geçiş" };
-  if (total < 0.4) return { cls: "ok", label: "Orta geçiş" };
-  return { cls: "rough", label: "Sert geçiş" };
+function transitionQuality(total: number): { cls: string; label: string; icon: IconType } {
+  if (total < 0.2) return { cls: "good", label: "Akıcı geçiş", icon: LuCheck };
+  if (total < 0.4) return { cls: "ok", label: "Orta geçiş", icon: LuMinus };
+  return { cls: "rough", label: "Sert geçiş", icon: LuTriangleAlert };
 }
 
 function keyRelation(d: number): string {
@@ -321,7 +390,7 @@ function TransitionRow({ a, b, step }: { a: Track; b: Track; step?: TransitionSt
   return (
     <div className={`trans trans-${q.cls}`} title={`Geçiş maliyeti ${step.total.toFixed(2)} (0 = kusursuz). Özellik uzaklıkları: ${detail}`}>
       <span className="trans-q">
-        <i />
+        <q.icon className="trans-ic" aria-hidden="true" />
         {q.label}
       </span>
       {facts.length > 0 && <span className="trans-facts">{facts.join(" · ")}</span>}
@@ -329,14 +398,7 @@ function TransitionRow({ a, b, step }: { a: Track; b: Track; step?: TransitionSt
   );
 }
 
-const PinIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
-    <path
-      d="M15 3l6 6-3 1-4 4 1 5-2 2-4-4-5 5H3v-1l5-5-4-4 2-2 5 1 4-4z"
-      fill="currentColor"
-    />
-  </svg>
-);
+const PinIcon = () => <LuPin aria-hidden="true" />;
 
 function OrderList({
   title,
@@ -423,7 +485,7 @@ function pipelineIndex(status: MixStatus | null): number {
   return 0;
 }
 
-function Timeline({ plan, tracks }: { plan: MixPlan; tracks: Track[] }) {
+function Timeline({ plan, tracks, playTime }: { plan: MixPlan; tracks: Track[]; playTime: number | null }) {
   const total = plan.total_duration_sec;
   const byId = Object.fromEntries(tracks.map((t) => [t.occurrence_id, t]));
   let cursor = 0;
@@ -433,12 +495,14 @@ function Timeline({ plan, tracks }: { plan: MixPlan; tracks: Track[] }) {
     cursor += s.duration_sec - fadeOut;
     return { s, start, fadeIn: plan.transitions[i - 1], fadeOut: plan.transitions[i] };
   });
+  // the segment under the playhead: the latest one that has started (crossfades overlap)
+  const active = playTime == null ? -1 : blocks.reduce((acc, b, i) => (playTime >= b.start ? i : acc), -1);
   return (
     <div className="timeline">
       {blocks.map(({ s, start, fadeOut }, i) => (
         <div
           key={s.id}
-          className={`tl-seg tl-${i % 6}`}
+          className={`tl-seg tl-${i % 6} ${i === active ? "tl-active" : ""} ${active >= 0 && i !== active ? "tl-dim" : ""}`}
           style={{ left: `${(start / total) * 100}%`, width: `${(s.duration_sec / total) * 100}%`, top: i % 2 ? 26 : 0 }}
           title={`${byId[s.id]?.title ?? s.id} · ${fmtTime(s.start_sec)}'dan ${s.duration_sec.toFixed(1)} sn`}
         >
@@ -448,6 +512,9 @@ function Timeline({ plan, tracks }: { plan: MixPlan; tracks: Track[] }) {
           )}
         </div>
       ))}
+      {playTime != null && playTime > 0 && (
+        <span className="tl-playhead" style={{ left: `${Math.min(100, (playTime / total) * 100)}%` }} aria-hidden="true" />
+      )}
     </div>
   );
 }
@@ -469,19 +536,27 @@ function MixPanel({
 }) {
   const busy = starting || status?.status === "processing";
   const idx = pipelineIndex(status);
+  const [playing, setPlaying] = useState(false);
+  const [playTime, setPlayTime] = useState(0);
+  useEffect(() => {
+    setPlaying(false);
+    setPlayTime(0);
+  }, [status?.mix_id]);
   const visibleTracks = status?.tracks.filter((t) => t.stage !== "skipped") ?? [];
   return (
     <section className="card mix">
       <div className="mix-head">
         <div>
-          <h2>Otomatik Miks</h2>
+          <h2>
+            <LuAudioWaveform aria-hidden="true" /> Otomatik Miks
+          </h2>
           <p className="muted">
             MoodFlow sırasındaki ilk 6 uygun şarkının YouTube sesi <code>yt-dlp</code> ile alınır, en güçlü bölümler
             seçilir ve geçişlerle ~60–100 sn'lik bir miks üretilir.
           </p>
         </div>
         <button className="btn btn-primary btn-lg" onClick={onStart} disabled={disabled || busy}>
-          {busy ? <span className="spinner" /> : "✨"} {busy ? "Miks hazırlanıyor…" : "Otomatik Miks Oluştur"}
+          {busy ? <EqBars /> : <LuWandSparkles aria-hidden="true" />} {busy ? "Miks hazırlanıyor…" : "Otomatik Miks Oluştur"}
         </button>
       </div>
 
@@ -497,7 +572,7 @@ function MixPanel({
                   status.status === "failed" && i === idx ? "failed" : i < idx ? "done" : i === idx ? "active" : ""
                 }
               >
-                <span className="pip" />
+                <p.icon className="pip-ic" aria-hidden="true" />
                 {p.label}
               </li>
             ))}
@@ -508,7 +583,18 @@ function MixPanel({
               {visibleTracks.map((t) => (
                 <li key={t.occurrence_id} className={`st-${t.stage}`}>
                   <span className="st-pill">
-                    {["matching", "downloading", "analyzing"].includes(t.stage) && <span className="spinner sm" />}
+                    {["matching", "downloading", "analyzing"].includes(t.stage) ? (
+                      t.stage === "matching" ? (
+                        <LuSearch className="pulse-ic" aria-hidden="true" />
+                      ) : (
+                        <EqBars />
+                      )
+                    ) : (
+                      (() => {
+                        const Icon = STAGE_ICON[t.stage];
+                        return Icon ? <Icon aria-hidden="true" /> : null;
+                      })()
+                    )}
                     {STAGE_LABEL[t.stage]}
                   </span>
                   <span className="progress-title">
@@ -524,16 +610,29 @@ function MixPanel({
 
           {status.status === "done" && status.audio_url && (
             <div className="player">
-              <audio controls autoPlay src={status.audio_url} />
-              <span className="muted">
+              <audio
+                controls
+                autoPlay
+                src={status.audio_url}
+                onPlay={() => setPlaying(true)}
+                onPause={() => setPlaying(false)}
+                onEnded={() => setPlaying(false)}
+                onTimeUpdate={(e) => setPlayTime(e.currentTarget.currentTime)}
+              />
+              <span className="muted player-meta">
+                <span className={`now-playing ${playing ? "on" : ""}`}>
+                  <EqBars playing={playing} /> {playing ? "Çalıyor" : "Duraklatıldı"}
+                </span>
                 {fmtTime(status.duration_sec)} ·{" "}
                 <a href={status.audio_url} download="moodflow-mix.mp3">
-                  MP3 indir
+                  <LuDownload className="inline-ic" aria-hidden="true" /> MP3 indir
                 </a>
               </span>
             </div>
           )}
-          {status.plan && <Timeline plan={status.plan} tracks={tracks} />}
+          {status.plan && (
+            <Timeline plan={status.plan} tracks={tracks} playTime={status.status === "done" ? playTime : null} />
+          )}
           {status.plan && (
             <p className="legend-row muted">
               <i className="lg lg-beat" /> vuruşa hizalı crossfade <i className="lg lg-safe" /> güvenli fade
@@ -699,7 +798,7 @@ export default function App() {
     <div className="app">
       <header className="hero">
         <div className="logo">
-          <span className="logo-mark">◐</span> MoodFlow
+          <EqBars className="logo-mark" /> MoodFlow
         </div>
         <p className="tagline">Playlistini oku, ruh haline göre yeniden sırala, tek tıkla geçişli bir miks dinle.</p>
       </header>
@@ -721,23 +820,60 @@ export default function App() {
             aria-label="Playlist URL"
           />
           <button className="btn btn-primary" type="submit" disabled={importing || !url.trim()}>
-            {importing ? <span className="spinner" /> : null} {importing ? "Okunuyor…" : "Playlisti Oku"}
+            {importing ? <EqBars /> : <LuListMusic aria-hidden="true" />} {importing ? "Okunuyor…" : "Playlisti Oku"}
           </button>
         </form>
         <div className="examples">
           <span className="muted">Örnek:</span>
-          {EXAMPLES.map((ex) => (
-            <button key={ex.url} className="btn btn-ghost btn-sm" onClick={() => doImport(ex.url)} disabled={importing}>
-              {ex.label}
-            </button>
-          ))}
+          {EXAMPLES.map((ex) => {
+            const Icon = PLATFORM_ICON[ex.platform];
+            return (
+              <button
+                key={ex.url}
+                className={`btn btn-ghost btn-sm ex-${ex.platform}`}
+                onClick={() => doImport(ex.url)}
+                disabled={importing}
+                title={`${PLATFORM_LABEL[ex.platform]} örneğini oku`}
+              >
+                <Icon className="ex-ic" aria-hidden="true" /> {ex.label}
+              </button>
+            );
+          })}
         </div>
         <ProviderStatus health={health} />
         {importing && (
-          <p className="muted small">Şarkılar okunuyor ve BPM / Key / Mood / Energy / Genre analiz ediliyor (≈10–30 sn)…</p>
+          <p className="muted small loading-line">
+            <EqBars /> Şarkılar okunuyor ve BPM / Key / Mood / Energy / Genre analiz ediliyor (≈10–30 sn)…
+          </p>
         )}
         {importError && <div className="alert alert-error">{importError}</div>}
       </section>
+
+      {!playlist && !importing && (
+        <ol className="steps" aria-label="Nasıl çalışır">
+          <li>
+            <LuListMusic aria-hidden="true" />
+            <b>Oku</b>
+            <span>Herkese açık bir playlist yapıştır; şarkıların BPM, ton, mood, enerji ve türü çıkarılır.</span>
+          </li>
+          <li className="step-arrow" aria-hidden="true">
+            <LuArrowRight />
+          </li>
+          <li>
+            <LuListOrdered aria-hidden="true" />
+            <b>Sırala</b>
+            <span>Bir mod seç ya da grafiğe kendi eğrini çiz; MoodFlow en akıcı sırayı bulur.</span>
+          </li>
+          <li className="step-arrow" aria-hidden="true">
+            <LuArrowRight />
+          </li>
+          <li>
+            <LuWandSparkles aria-hidden="true" />
+            <b>Mixle</b>
+            <span>Tek tıkla en iyi bölümler seçilir, geçişlerle bağlanır ve sayfada çalar.</span>
+          </li>
+        </ol>
+      )}
 
       {playlist && (
         <>
@@ -750,7 +886,9 @@ export default function App() {
             </div>
             {playlist.warnings.length > 0 && (
               <details className="warnings-box">
-                <summary>{playlist.warnings.length} uyarı</summary>
+                <summary>
+                  <LuTriangleAlert className="inline-ic" aria-hidden="true" /> {playlist.warnings.length} uyarı
+                </summary>
                 <ul className="warnings">
                   {playlist.warnings.map((w) => (
                     <li key={w}>{w}</li>
@@ -794,7 +932,9 @@ export default function App() {
 
           <section className="card">
             <div className="section-head">
-              <h2>Sıralama modu</h2>
+              <h2>
+                <LuListOrdered aria-hidden="true" /> Sıralama modu
+              </h2>
               {ranking && (
                 <span className="score">
                   {ranking.curve_error_after != null && (
@@ -808,7 +948,9 @@ export default function App() {
                   {ranking.kept_original ? (
                     <span className="muted"> (orijinal sıra zaten en iyisi)</span>
                   ) : (
-                    <span className="improve">−{improvement}%</span>
+                    <span className="improve" key={ranking.score_after}>
+                      −{improvement}%
+                    </span>
                   )}
                 </span>
               )}
@@ -822,7 +964,9 @@ export default function App() {
                   className={`mode ${mode === m.id ? "active" : ""}`}
                   onClick={() => setMode(m.id)}
                 >
-                  <span className="mode-label">{m.label}</span>
+                  <span className="mode-label">
+                    <m.icon className="mode-ic" aria-hidden="true" /> {m.label}
+                  </span>
                   <span className="mode-hint">{m.hint}</span>
                 </button>
               ))}
