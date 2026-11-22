@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import threading
+import time
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
@@ -225,18 +226,94 @@ def fill_from_downloaded_audio(items: list[tuple[Track, float | None, float | No
     return updates
 
 
+class ProviderCache:
+    """Persistent cache of each provider's answer per track (JSON file, atomic writes).
+
+    One entry per (provider, provider cache version, artist|title|version[, platform id]):
+      * a hit with fields  → kept ``positive_ttl`` (features of a recording don't change)
+      * "not found"/mismatch → kept ``negative_ttl``, then asked again (catalogues grow)
+    "Try again later" outcomes (FreqBlog 202 still ingesting, rate limits, time budget,
+    network errors, rejected keys) are never stored. Keys never contain API keys.
+    """
+
+    def __init__(self, path: Path | None, positive_ttl: float = 30 * 86400, negative_ttl: float = 7 * 86400,
+                 clock=time.time):
+        self.path = path
+        self.positive_ttl = positive_ttl
+        self.negative_ttl = negative_ttl
+        self._clock = clock
+        self._lock = threading.Lock()
+        self._data: dict[str, dict] = {}
+        self._dirty = False
+        if path and path.is_file():
+            try:
+                raw = json.loads(path.read_text())
+                self._data = {k: e for k, e in raw.items()
+                              if isinstance(e, dict) and isinstance(e.get("t"), (int, float)) and "fields" in e}
+            except (OSError, json.JSONDecodeError, AttributeError):
+                self._data = {}
+
+    @staticmethod
+    def key(provider: Provider, track: Track) -> str:
+        versions = ",".join(sorted(version_tags(track.title)))
+        k = f"{provider.name}@{getattr(provider, 'cache_version', 1)}|" \
+            f"{normalize_text(track.artist)}|{normalize_text(track.title)}|{versions}"
+        if getattr(provider, "uses_platform_id", False):
+            k += f"|{track.platform}:{track.source_id}"
+        return k
+
+    _MISS = object()
+
+    def get(self, provider: Provider, track: Track):
+        """Cached fields dict, ``None`` for a cached "not found", or ``ProviderCache._MISS``."""
+        with self._lock:
+            e = self._data.get(self.key(provider, track))
+        if not e:
+            return self._MISS
+        ttl = self.positive_ttl if e["fields"] is not None else self.negative_ttl
+        return e["fields"] if self._clock() - e["t"] <= ttl else self._MISS
+
+    def has(self, provider: Provider, track: Track) -> bool:
+        return self.get(provider, track) is not self._MISS
+
+    def put(self, provider: Provider, track: Track, fields: dict | None) -> None:
+        with self._lock:
+            self._data[self.key(provider, track)] = {"t": self._clock(), "fields": fields}
+            self._dirty = True
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def save(self) -> None:
+        if not self.path:
+            return
+        with self._lock:
+            if not self._dirty:
+                return
+            now = self._clock()
+            # drop expired entries so the file doesn't grow forever
+            self._data = {k: e for k, e in self._data.items()
+                          if now - e["t"] <= (self.positive_ttl if e["fields"] is not None else self.negative_ttl)}
+            payload = json.dumps(self._data)
+            self._dirty = False
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text(payload)
+            os.replace(tmp, self.path)  # atomic: a crash never leaves a half-written cache
+        except OSError as err:
+            log.warning("provider cache not saved: %s", err)
+
+
 class FeatureService:
-    def __init__(self, providers: list[Provider], cache_file: Path | None = None, workers: int = 4):
+    def __init__(self, providers: list[Provider], cache_file: Path | None = None, workers: int = 4,
+                 cache: ProviderCache | None = None):
         self.providers = providers
         self.workers = workers
-        self.cache_file = cache_file
-        self._cache: dict[str, dict] = {}
-        self._lock = threading.Lock()
-        if cache_file and cache_file.is_file():
-            try:
-                self._cache = json.loads(cache_file.read_text())
-            except (OSError, json.JSONDecodeError):
-                self._cache = {}
+        self.cache = cache if cache is not None else ProviderCache(cache_file)  # (empty cache is falsy)
+        self._stats_lock = threading.Lock()
+        self.last_usage: dict[str, dict[str, int]] = {}
+        self.total_usage: dict[str, dict[str, int]] = {}
 
     def status(self) -> dict[str, str | None]:
         return {p.name: p.disabled_reason for p in self.providers}
@@ -244,11 +321,11 @@ class FeatureService:
     # -- public
     def enrich(self, tracks: list[Track]) -> list[str]:
         warnings: list[str] = []
-        with self._lock:
-            uncached = [t for t in tracks if self.cache_key(t) not in self._cache]
+        self.last_usage = {p.name: {"calls": 0, "cached": 0} for p in self.providers if p.enabled}
         for p in self.providers:
             if p.enabled and hasattr(p, "begin_batch"):
-                p.begin_batch(uncached)  # e.g. one batch request instead of one per track
+                # batch-prefetch only what this provider hasn't answered before
+                p.begin_batch([t for t in tracks if not self.cache.has(p, t)])
         with ThreadPoolExecutor(self.workers) as pool:
             results = list(pool.map(self._collect, tracks))
         for track, (data, sources, problems, errored) in zip(tracks, results):
@@ -259,23 +336,36 @@ class FeatureService:
         disabled = [f"{p.name}: {p.disabled_reason}" for p in self.providers if p.disabled_reason]
         if disabled:
             warnings.insert(0, "Atlanan kaynaklar → " + "; ".join(disabled))
-        self._save_cache()
+        self.cache.save()
+        for name, u in self.last_usage.items():
+            tot = self.total_usage.setdefault(name, {"calls": 0, "cached": 0})
+            tot["calls"] += u["calls"]
+            tot["cached"] += u["cached"]
+        log.info("feature providers this import: %s", self.last_usage)
         return warnings
 
     # -- internals
-    @staticmethod
-    def cache_key(track: Track) -> str:
-        versions = ",".join(sorted(version_tags(track.title)))
-        return f"{normalize_text(track.artist)}|{normalize_text(track.title)}|{versions}"
+    def _count(self, provider: Provider, kind: str) -> None:
+        with self._stats_lock:
+            self.last_usage.setdefault(provider.name, {"calls": 0, "cached": 0})[kind] += 1
+
+    def _ask(self, p: Provider, track: Track):
+        """Provider answer for this track, from cache when possible. Raises on retry-later/errors."""
+        cached = self.cache.get(p, track)
+        if cached is not ProviderCache._MISS:
+            self._count(p, "cached")
+            return cached
+        self._count(p, "calls")
+        if hasattr(p, "lookup_track"):  # providers that can use platform ids (Spotify id)
+            res = p.lookup_track(track)
+        else:
+            res = p.lookup(track.title, track.artist, match_duration(track))
+        fields = res.fields if res is not None else None
+        self.cache.put(p, track, fields)  # only definitive answers get here
+        return fields
 
     def _collect(self, track: Track) -> tuple[dict, dict, list[str], set[str]]:
-        key = self.cache_key(track)
-        with self._lock:
-            cached = self._cache.get(key)
-        if cached is not None:
-            return dict(cached["data"]), dict(cached["sources"]), [], set()
-
-        from .feature_providers import ProviderAuthError
+        from .feature_providers import ProviderAuthError, ProviderRetryLater
 
         data: dict[str, Any] = {}
         sources: dict[str, str] = {}
@@ -289,10 +379,11 @@ class FeatureService:
             if not wanted:
                 continue
             try:
-                if hasattr(p, "lookup_track"):  # providers that can use platform ids (Spotify id)
-                    res = p.lookup_track(track)
-                else:
-                    res = p.lookup(track.title, track.artist, match_duration(track))
+                fields = self._ask(p, track)
+            except ProviderRetryLater as err:
+                problems.append(f"{p.name}: {err} — sonraki okumada tekrar denenecek")
+                errored |= {FEATURE_OF_GROUP[g] for g in wanted}
+                continue
             except ProviderAuthError as err:
                 problems.append(str(err))
                 errored |= {FEATURE_OF_GROUP[g] for g in wanted}
@@ -302,10 +393,10 @@ class FeatureService:
                 problems.append(f"{p.name} yanıt vermedi")
                 errored |= {FEATURE_OF_GROUP[g] for g in wanted}
                 continue
-            if res is None:
+            if not fields:
                 continue
             newly: set[str] = set()
-            for f, v in res.fields.items():
+            for f, v in fields.items():
                 g = GROUP_OF.get(f)
                 if v is None or g not in wanted:
                     continue
@@ -313,34 +404,19 @@ class FeatureService:
                 newly.add(g)
             for g in newly:
                 if g in SOURCE_KEY:
-                    sources[SOURCE_KEY[g]] = res.source
+                    sources[SOURCE_KEY[g]] = p.name
             filled |= newly
         # coarse mood only from provider valence + energy (both FreqBlog)
         if "mood" not in data and data.get("valence") is not None and sources.get("energy") == "freqblog":
             data["mood"] = mood_labels(data["valence"], data["energy"])
             sources["mood"] = "derived(freqblog valence+energy)"
         errored -= {FEATURE_OF_GROUP[g] for g in filled}  # a later provider filled it after all
-        cut_short = "genre" not in data and any(getattr(p, "exhausted", False) for p in self.providers if p.enabled)
-        # time-budget skips and transient errors should be retried on the next import, not cached
-        if not cut_short and not errored:
-            with self._lock:
-                self._cache[key] = {"data": data, "sources": sources}
         return data, sources, problems, errored
 
     @staticmethod
     def _to_features(data: dict, sources: dict) -> Features:
         allowed = set(Features.model_fields) - {"sources", "missing_features", "status"}
         return Features(**{k: v for k, v in data.items() if k in allowed}, sources=sources)
-
-    def _save_cache(self) -> None:
-        if not self.cache_file:
-            return
-        try:
-            self.cache_file.parent.mkdir(parents=True, exist_ok=True)
-            with self._lock:
-                self.cache_file.write_text(json.dumps(self._cache))
-        except OSError:
-            pass
 
 
 def build_feature_service(cache_file: Path | None = None) -> FeatureService:
@@ -357,4 +433,8 @@ def build_feature_service(cache_file: Path | None = None) -> FeatureService:
         LastFmProvider(os.getenv("LASTFM_API_KEY")),
         MusicBrainzGenreProvider(enabled=flag("MOODFLOW_MUSICBRAINZ"),
                                  budget_sec=float(os.getenv("MOODFLOW_MUSICBRAINZ_BUDGET", 15))),
-    ], cache_file=cache_file, workers=6)
+    ], workers=6, cache=ProviderCache(
+        cache_file,
+        positive_ttl=float(os.getenv("MOODFLOW_PROVIDER_CACHE_DAYS", 30)) * 86400,
+        negative_ttl=float(os.getenv("MOODFLOW_PROVIDER_CACHE_NEGATIVE_DAYS", 7)) * 86400,
+    ))

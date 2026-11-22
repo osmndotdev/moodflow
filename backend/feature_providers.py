@@ -46,6 +46,13 @@ class ProviderAuthError(Exception):
     pass
 
 
+class ProviderRetryLater(Exception):
+    """Not an answer: the provider couldn't decide now (still ingesting, rate limit, time budget).
+
+    Unlike ``None`` ("doesn't have this track"), this is never cached, so the next import asks again.
+    """
+
+
 def _accept_match(title: str, artist: str, duration: float | None,
                   m_title: str | None, m_artist: str | None, m_duration: float | None) -> bool:
     """Reject a provider hit whose artist/title/version or length doesn't fit the playlist item."""
@@ -92,13 +99,14 @@ class FreqBlogProvider:
             if res.status_code == 202:
                 attempts_202 += 1
                 if attempts_202 > self.retries_202:
-                    return None  # still ingesting; leave fields to the fallbacks
+                    # ingest queued (billed once); re-polling later is free, so never cache this
+                    raise ProviderRetryLater("parça henüz analiz ediliyor (202)")
                 self._sleep(self.wait_202)
                 continue
             if res.status_code == 429:
                 attempts_429 += 1
                 if attempts_429 > 2:
-                    return None
+                    raise ProviderRetryLater("istek limiti (429)")
                 try:
                     wait = float(res.headers.get("Retry-After", 2))
                 except ValueError:
@@ -162,6 +170,8 @@ class GetSongBPMProvider:
 
     def _get(self, path: str, params: dict) -> dict:
         res = self.client.get(f"{self.BASE}{path}", params=params, headers={"X-API-KEY": self.api_key})
+        if res.status_code == 429:
+            raise ProviderRetryLater("istek limiti (429)")
         if res.status_code in (401, 403):
             self.disabled_reason = "GetSongBPM API anahtarı reddedildi"
             raise ProviderAuthError(self.disabled_reason)
@@ -214,6 +224,7 @@ class ReccoBeatsProvider:
     """
 
     name = "reccobeats"
+    uses_platform_id = True  # Spotify items are answered by Spotify id → part of the cache key
     BASE = "https://api.reccobeats.com/v1"
     BATCH = 40
 
@@ -246,7 +257,7 @@ class ReccoBeatsProvider:
                 return None
             res.raise_for_status()
             return res.json()
-        return None
+        raise ProviderRetryLater("istek limiti (429)")
 
     def begin_batch(self, tracks=None) -> None:
         """Prefetch audio features for every Spotify item in one or two requests."""
@@ -257,8 +268,8 @@ class ReccoBeatsProvider:
         for i in range(0, len(ids), self.BATCH):
             try:
                 data = self._get("/audio-features", {"ids": ",".join(ids[i:i + self.BATCH])}) or {}
-            except httpx.HTTPError as err:
-                log.warning("reccobeats batch failed: %s", err)
+            except (httpx.HTTPError, ProviderRetryLater) as err:
+                log.warning("reccobeats batch failed: %s", err)  # per-track lookups still run
                 return
             for item in data.get("content") or []:
                 sid = (item.get("href") or "").rstrip("/").rsplit("/", 1)[-1]
@@ -361,7 +372,11 @@ class LastFmProvider:
             "method": "track.getTopTags", "artist": artist, "track": title,
             "api_key": self.api_key, "format": "json", "autocorrect": 1,
         })
+        if res.status_code == 429 or res.status_code >= 500:
+            raise ProviderRetryLater(f"HTTP {res.status_code}")
         data = res.json() if res.content else {}
+        if data.get("error") in (11, 16, 29):  # service offline / temporary error / rate limit
+            raise ProviderRetryLater(f"Last.fm hata {data['error']}")
         if data.get("error") in (10, 26):  # invalid / suspended key
             self.disabled_reason = "Last.fm API anahtarı reddedildi"
             raise ProviderAuthError(self.disabled_reason)
@@ -379,7 +394,7 @@ class MusicBrainzGenreProvider:
 
     One artist search per distinct artist (cached). MusicBrainz allows ~1 request/second and
     answers 503 when busy, so calls are serialised with back-off, and each import gets a time
-    budget: once it's spent, remaining tracks simply keep ``genre = null``.
+    budget: once it's spent, remaining tracks keep ``genre = null`` and are retried next import.
     """
 
     name = "musicbrainz"
@@ -433,8 +448,8 @@ class MusicBrainzGenreProvider:
         key = primary.lower()
         if key not in self._artist_cache:
             data = self._get("/artist/", {"query": f'artist:"{primary.replace(chr(34), "")}"', "limit": 1})
-            if data is None:
-                return None  # budget spent / still rate limited: don't cache, a later import may succeed
+            if data is None:  # budget spent / still rate limited
+                raise ProviderRetryLater("zaman bütçesi doldu / istek limiti")
             genres = None
             for art in data.get("artists") or []:
                 if art.get("score", 0) >= 90 and match_score(primary, primary, None, art.get("name", ""),

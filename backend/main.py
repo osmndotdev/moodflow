@@ -58,7 +58,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-feature_service: FeatureService = build_feature_service(cache_file=CACHE_DIR / "features.json")
+# per-provider answers persist across restarts so re-imports don't spend API credits again
+feature_service: FeatureService = build_feature_service(cache_file=CACHE_DIR / "provider_cache.json")
 jobs: dict[str, MixStatus] = {}
 jobs_lock = threading.Lock()
 job_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="mix")
@@ -94,7 +95,7 @@ def api_import(req: ImportRequest) -> ImportResponse:
     warnings = list(result.warnings)
     warnings += feature_service.enrich(result.tracks)
     return ImportResponse(playlist_title=result.title, platform=result.platform,
-                          tracks=result.tracks, warnings=warnings)
+                          tracks=result.tracks, warnings=warnings, api_usage=feature_service.last_usage)
 
 
 @app.post("/api/rank", response_model=RankResponse)
@@ -266,6 +267,7 @@ def health() -> dict:
         "ffprobe": bool(shutil.which("ffprobe")),
         # provider → null when active, otherwise why it is skipped (keys themselves are never exposed)
         "feature_providers": feature_service.status(),
+        "provider_cache": {"entries": len(feature_service.cache), "usage_since_start": feature_service.total_usage},
     }
 
 

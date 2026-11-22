@@ -161,6 +161,22 @@ function ProviderStatus({ health }: { health: Health | null }) {
   );
 }
 
+function ApiUsage({ usage }: { usage?: Record<string, { calls: number; cached: number }> }) {
+  const rows = Object.entries(usage ?? {}).filter(([, u]) => u.calls + u.cached > 0);
+  if (!rows.length) return null;
+  return (
+    <p className="muted small api-usage" title="Daha önce alınan yanıtlar önbellekten gelir; API kredisi harcanmaz.">
+      Bu okumada API kullanımı:{" "}
+      {rows.map(([name, u], i) => (
+        <span key={name}>
+          {i > 0 && " · "}
+          {PROVIDER_LABEL[name] ?? name} <b>{u.calls}</b> istek, {u.cached} önbellekten
+        </span>
+      ))}
+    </p>
+  );
+}
+
 /* ------------------------------------------------------------------ track table */
 
 function TrackTable({ tracks }: { tracks: Track[] }) {
@@ -598,6 +614,7 @@ export default function App() {
                 </ul>
               </details>
             )}
+            <ApiUsage usage={playlist.api_usage} />
             <TrackTable tracks={displayTracks} />
             <p className="muted small">
               Öncelik: FreqBlog → ReccoBeats / GetSongBPM (BPM/Key) → Last.fm / MusicBrainz (Genre). Eksik BPM ve enerji, miks

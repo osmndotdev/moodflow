@@ -49,6 +49,8 @@ class ImportResponse(BaseModel):
     platform: Platform
     tracks: list[Track]
     warnings: list[str] = []
+    # provider → {"calls": real API requests this import, "cached": answers reused from the cache}
+    api_usage: dict[str, dict[str, int]] = {}
 
 
 class Weights(BaseModel):

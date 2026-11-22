@@ -2,7 +2,8 @@ import httpx
 import pytest
 
 from backend.feature_providers import (
-    FreqBlogProvider, GetSongBPMProvider, LastFmProvider, ProviderAuthError, ProviderResult, filter_genre_tags,
+    FreqBlogProvider, GetSongBPMProvider, LastFmProvider, ProviderAuthError, ProviderResult, ProviderRetryLater,
+    filter_genre_tags,
 )
 from backend.features import FeatureService, camelot_from_key_name, camelot_from_open_key
 from backend.schemas import Track
@@ -55,9 +56,10 @@ def test_freqblog_retries_202_then_succeeds():
     assert len(calls) == 3 and sleeps == [2.0, 2.0]
 
 
-def test_freqblog_gives_up_on_persistent_202():
+def test_freqblog_persistent_202_means_retry_later_not_missing():
     p = FreqBlogProvider("k", client=_client(lambda r: httpx.Response(202)), retries_202=2, sleep=lambda s: None)
-    assert p.lookup("Unknown", "Nobody", None) is None
+    with pytest.raises(ProviderRetryLater):
+        p.lookup("Unknown", "Nobody", None)
 
 
 def test_freqblog_respects_retry_after_on_429():
@@ -321,3 +323,126 @@ def test_youtube_durations_are_not_used_for_identity_checks():
     sp = _track(title="Save Your Tears", duration=251, i=2)
     FeatureService([Rec("freqblog")]).enrich([yt, sp])
     assert sorted(seen, key=lambda d: d or 0) == [None, 251]
+
+
+# ------------------------------------------------------------------ provider cache (API credits)
+
+from backend.features import ProviderCache  # noqa: E402
+
+
+class Clock:
+    def __init__(self):
+        self.t = 1_000_000.0
+
+    def __call__(self):
+        return self.t
+
+
+def _svc(providers, tmp_path, clock=None, **ttl):
+    return FeatureService(providers, cache=ProviderCache(tmp_path / "c.json", clock=clock or Clock(), **ttl))
+
+
+def test_reimport_costs_zero_api_calls_and_survives_restart(tmp_path):
+    fb = Fake("freqblog", {"bpm": 120.0, "camelot": "8A", "energy": 0.7, "valence": 0.6, "genre": ["pop"]})
+    tracks = [_track(title=f"Song {i}", i=i) for i in range(5)]
+    svc = _svc([fb], tmp_path)
+    svc.enrich(tracks)
+    assert fb.calls == 5 and svc.last_usage["freqblog"] == {"calls": 5, "cached": 0}
+    svc.enrich([_track(title=f"Song {i}", i=i) for i in range(5)])
+    assert fb.calls == 5 and svc.last_usage["freqblog"] == {"calls": 0, "cached": 5}
+    restarted = _svc([fb], tmp_path)  # new process, same cache file
+    t = _track(title="Song 3", i=3)
+    restarted.enrich([t])
+    assert fb.calls == 5 and t.features.bpm == 120.0 and t.features.sources["bpm"] == "freqblog"
+
+
+def test_one_failing_provider_does_not_make_others_pay_again(tmp_path):
+    fb = Fake("freqblog", {"bpm": 120.0})
+    lf = Fake("lastfm", exc=httpx.ConnectError("down"))
+    svc = _svc([fb, lf], tmp_path)
+    svc.enrich([_track()])
+    svc.enrich([_track()])
+    assert fb.calls == 1, "FreqBlog's answer must be reused even though Last.fm failed"
+    assert lf.calls == 2, "the failed provider is retried"
+
+
+def test_retry_later_is_never_cached(tmp_path):
+    fb = Fake("freqblog", exc=ProviderRetryLater("parça henüz analiz ediliyor (202)"))
+    svc = _svc([fb], tmp_path)
+    t = _track()
+    warnings = svc.enrich([t])
+    assert t.features.status["bpm"] == "error" and any("tekrar denenecek" in w for w in warnings)
+    fb.exc, fb.fields = None, {"bpm": 99.0}
+    t2 = _track()
+    svc.enrich([t2])
+    assert fb.calls == 2 and t2.features.bpm == 99.0
+
+
+def test_not_found_is_cached_then_expires(tmp_path):
+    clock = Clock()
+    fb = Fake("freqblog", None)
+    svc = _svc([fb], tmp_path, clock=clock, negative_ttl=7 * 86400)
+    svc.enrich([_track()])
+    clock.t += 6 * 86400
+    svc.enrich([_track()])
+    assert fb.calls == 1
+    clock.t += 2 * 86400  # 8 days: catalogue may have the track now
+    svc.enrich([_track()])
+    assert fb.calls == 2
+
+
+def test_hits_expire_after_positive_ttl(tmp_path):
+    clock = Clock()
+    fb = Fake("freqblog", {"bpm": 120.0})
+    svc = _svc([fb], tmp_path, clock=clock, positive_ttl=30 * 86400)
+    svc.enrich([_track()])
+    clock.t += 29 * 86400
+    svc.enrich([_track()])
+    assert fb.calls == 1
+    clock.t += 2 * 86400
+    svc.enrich([_track()])
+    assert fb.calls == 2
+
+
+def test_new_provider_only_asks_for_its_own_data(tmp_path):
+    fb = Fake("freqblog", {"bpm": 120.0})
+    _svc([fb], tmp_path).enrich([_track()])
+    lf = Fake("lastfm", {"genre": ["pop"]})  # e.g. LASTFM_API_KEY added later
+    t = _track()
+    _svc([fb, lf], tmp_path).enrich([t])
+    assert (fb.calls, lf.calls) == (1, 1) and t.features.genre == ["pop"]
+
+
+def test_batch_prefetch_only_for_uncached_tracks(tmp_path):
+    class Batch(Fake):
+        uses_platform_id = True
+
+        def __init__(self, *a, **k):
+            super().__init__(*a, **k)
+            self.batches = []
+
+        def begin_batch(self, tracks):
+            self.batches.append([t.occurrence_id for t in tracks])
+
+    rb = Batch("reccobeats", {"bpm": 100.0})
+    svc = _svc([rb], tmp_path)
+    svc.enrich([_track(title="A", i=1), _track(title="B", i=2)])
+    svc.enrich([_track(title="A", i=1), _track(title="B", i=2), _track(title="C", i=3)])
+    assert rb.batches == [["item-001", "item-002"], ["item-003"]]
+
+
+def test_cache_file_is_atomic_json_without_secrets(tmp_path):
+    fb = FreqBlogProvider("sk_live_SECRET", client=_client(lambda r: httpx.Response(200, json=BLINDING)))
+    svc = _svc([fb], tmp_path)
+    svc.enrich([_track()])
+    text = (tmp_path / "c.json").read_text()
+    assert "SECRET" not in text and "freqblog@1|the weeknd|blinding lights|" in text
+    assert not (tmp_path / "c.tmp").exists()
+
+
+def test_cache_version_bump_invalidates(tmp_path):
+    fb = Fake("freqblog", {"bpm": 120.0})
+    _svc([fb], tmp_path).enrich([_track()])
+    fb.cache_version = 2  # e.g. normalisation logic changed
+    _svc([fb], tmp_path).enrich([_track()])
+    assert fb.calls == 2

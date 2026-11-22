@@ -45,6 +45,7 @@ export interface ImportResponse {
   platform: Platform;
   tracks: Track[];
   warnings: string[];
+  api_usage: Record<string, { calls: number; cached: number }>;
 }
 
 export interface Weights {
