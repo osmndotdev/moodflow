@@ -27,13 +27,17 @@ No login, no OAuth, nothing is written back to YouTube/Spotify, no uploads.
 
 ## Run
 
-```bash
-python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-```
+One-time setup (creates `.venv` if missing, installs the Python and frontend dependencies, builds the
+frontend, creates `.env` from `.env.example` if there is none, and warns if ffmpeg is missing):
 
 ```bash
-npm --prefix frontend install
+just setup
 ```
+
+It uses `python3`; pick another interpreter with `just python=python3.14 setup`. Re-run it after
+pulling changes. Without [just](https://github.com/casey/just), run the same steps by hand:
+`python3 -m venv .venv`, `.venv/bin/pip install -r requirements.txt`, `npm --prefix frontend ci`,
+`npm --prefix frontend run build`.
 
 Dev mode, both servers in one terminal with auto-reload (Ctrl-C stops both):
 
@@ -41,8 +45,8 @@ Dev mode, both servers in one terminal with auto-reload (Ctrl-C stops both):
 just dev
 ```
 
-(`./dev.sh` does the same without [just](https://github.com/casey/just). `just` alone lists the other recipes:
-`backend`, `frontend`, `test`.)
+(`./dev.sh` does the same without just. `just` alone lists the other recipes:
+`setup`, `backend`, `frontend`, `test`.)
 
 Open http://localhost:5173 (Vite proxies `/api` to the backend). The backend port is `MOODFLOW_PORT` in `.env` (default 8000).
 
@@ -52,7 +56,9 @@ Open http://localhost:5173 (Vite proxies `/api` to the backend). The backend por
   and changes to `.env` still need a manual restart. Set `MOODFLOW_RELOAD=0` to turn reloading off.
 - Separately: `.venv/bin/python -m backend` and `npm --prefix frontend run dev`.
 
-Single-port mode: `npm --prefix frontend run build`, then start the backend alone and open http://localhost:8000 (or your `MOODFLOW_PORT`).
+Single-port mode (also how a server runs it): after `just setup`, start the backend alone with
+`MOODFLOW_RELOAD=0` and open http://localhost:8000 (or your `MOODFLOW_PORT`); it serves the built page
+and the API on that one port, so a reverse proxy only needs to forward everything to it.
 
 Tests (offline, ~10 s; downloads and network are faked, audio is synthesized):
 
