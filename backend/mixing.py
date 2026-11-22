@@ -25,20 +25,27 @@ def build_command(plan: dict, sources: dict[str, Path], out_path: Path) -> list[
     cmd = [FFMPEG, "-hide_banner", "-loglevel", "error", "-y"]
     for seg in segments:
         src = sources[seg["id"]]
-        cmd += ["-ss", f"{seg['start_sec']:.3f}", "-t", f"{seg['duration_sec']:.3f}", "-i", str(src)]
+        src_dur = seg.get("source_duration_sec", seg["duration_sec"])
+        # small pad so a stretched segment can always be trimmed to its exact length below
+        cmd += ["-ss", f"{seg['start_sec']:.4f}", "-t", f"{src_dur + 0.1:.4f}", "-i", str(src)]
 
     parts = []
     for i, seg in enumerate(segments):
-        parts.append(
-            f"[{i}:a]aformat=sample_fmts=fltp:sample_rates={SR}:channel_layouts=stereo,"
-            f"volume={seg['gain_db']:.2f}dB[s{i}]"
-        )
+        stretch = float(seg.get("stretch", 1.0))
+        chain = [f"aformat=sample_fmts=fltp:sample_rates={SR}:channel_layouts=stereo"]
+        if abs(stretch - 1) > 1e-4:
+            chain.append(f"atempo={stretch:.5f}")  # tempo match, pitch preserved
+        # exact length in samples: the next crossfade then starts on the planned beat
+        chain += ["apad=pad_dur=0.2", f"atrim=end_sample={round(seg['duration_sec'] * SR)}",
+                  f"volume={seg['gain_db']:.2f}dB"]
+        parts.append(f"[{i}:a]{','.join(chain)}[s{i}]")
     prev = "s0"
     for i, t in enumerate(transitions, start=1):
         # beat crossfades use equal-power curves; safe fades use a gentler exp/log pair
         c1, c2 = ("qsin", "qsin") if t["type"] == "beat_crossfade" else ("exp", "log")
         label = f"x{i}"
-        parts.append(f"[{prev}][s{i}]acrossfade=d={t['duration_sec']:.3f}:c1={c1}:c2={c2}[{label}]")
+        ns = max(1, round(t["duration_sec"] * SR))  # in samples, so overlaps are exact
+        parts.append(f"[{prev}][s{i}]acrossfade=ns={ns}:c1={c1}:c2={c2}[{label}]")
         prev = label
     total = float(plan["total_duration_sec"])
     fade_out = min(3.0, total / 10)

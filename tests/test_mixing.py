@@ -1,6 +1,7 @@
 import time
 from pathlib import Path
 
+import numpy as np
 import pytest
 
 from backend import arrangement, audio_sources, main, mixing
@@ -132,3 +133,69 @@ def test_job_fails_cleanly_with_fewer_than_two_sources(monkeypatch, tmp_path, si
 
     job = _run_job(monkeypatch, tmp_path, _tracks(3), fake_fetch)
     assert job.status == "failed" and "iki" in job.error
+
+
+# ------------------------------------------------------------------ beat-locked crossfades
+
+def test_local_period_is_sub_frame_precise():
+    period = 60 / 123.4
+    beats = np.round(np.arange(40) * period / (512 / 22050)) * (512 / 22050) + 3.0  # quantised like librosa
+    assert arrangement.local_period(beats, 10.0) == pytest.approx(period, abs=0.0015)
+
+
+def test_fold_ratio_handles_half_time():
+    assert arrangement.fold_ratio(0.5, 0.51) == pytest.approx(1.02)
+    assert arrangement.fold_ratio(0.5, 1.02) == pytest.approx(1.02)  # B tracked at half speed
+
+
+def test_beat_locked_plan_fields(tmp_path):
+    from tests.conftest import make_beat_wav
+    a = arrangement.analyze_track(make_beat_wav(tmp_path / "a.wav", bpm=120, seconds=70, freq=220))
+    b = arrangement.analyze_track(make_beat_wav(tmp_path / "b.wav", bpm=124, seconds=70, freq=330))
+    plan = arrangement.build_plan([("A", a), ("B", b)])
+    t = plan["transitions"][0]
+    assert t["type"] == "beat_crossfade" and t["beats"] in (8, 16, 4)
+    assert t["tempo_change_pct"] == pytest.approx((120 / 124 - 1) * 100, abs=0.6)
+    seg_a, seg_b = plan["segments"]
+    assert seg_b["duration_sec"] == pytest.approx(seg_b["source_duration_sec"] / seg_b["stretch"], abs=1e-3)
+    end_a = seg_a["start_sec"] + seg_a["source_duration_sec"]
+    assert np.min(np.abs(a.beat_times - end_a)) < 1e-3  # A ends exactly on one of its beats
+    assert abs(seg_b["stretch"] - 1) <= arrangement.MAX_STRETCH
+
+
+def test_rendered_crossfade_has_no_doubled_hits(tmp_path):
+    """End to end through FFmpeg: two kick patterns at 120 and 124 BPM with a random phase
+    offset must play as one pattern during the overlap (no flams / doubled hits)."""
+    import librosa
+
+    from tests.conftest import make_beat_wav
+    pa = make_beat_wav(tmp_path / "a.wav", bpm=120, seconds=70, freq=220)
+    pb = make_beat_wav(tmp_path / "b.wav", bpm=124, seconds=70, freq=330)
+    # shift B's beat phase so a naive cut would land between beats
+    y, sr = sf_read(pb)
+    sf_write(pb, y[int(0.17 * sr):], sr)
+    a, b = arrangement.analyze_track(pa), arrangement.analyze_track(pb)
+    plan = arrangement.build_plan([("A", a), ("B", b)])
+    t = plan["transitions"][0]
+    assert t["type"] == "beat_crossfade"
+    out = mixing.render_mix(plan, {"A": pa, "B": pb}, tmp_path / "mix.mp3")
+    y, sr = librosa.load(str(out), sr=22050)
+    seg_a = plan["segments"][0]
+    ov0 = seg_a["duration_sec"] - t["duration_sec"]
+    clip = y[int((ov0 + 0.2) * sr): int((ov0 + t["duration_sec"] - 0.2) * sr)]
+    on = librosa.onset.onset_detect(y=clip, sr=sr, hop_length=128, units="time", backtrack=False)
+    ioi = np.diff(on)
+    period = 0.5  # A's 120 BPM, which B is stretched to
+    assert len(on) >= 4
+    assert ioi.min() > 0.6 * period, f"doubled hits in the overlap: {np.round(ioi, 3)}"
+    assert np.abs(ioi - period).max() < 0.03, f"uneven beats in the overlap: {np.round(ioi, 3)}"
+
+
+def sf_read(path):
+    import soundfile as sf
+    return sf.read(path)
+
+
+def sf_write(path, y, sr):
+    import soundfile as sf
+    sf.write(path, y, sr)

@@ -501,7 +501,17 @@ function Timeline({ plan, tracks, playTime }: { plan: MixPlan; tracks: Track[]; 
         >
           <span className="tl-label">{byId[s.id]?.title ?? s.id}</span>
           {fadeOut && (
-            <span className={`tl-fade ${fadeOut.type}`} style={{ width: `${(fadeOut.duration_sec / s.duration_sec) * 100}%` }} />
+            <span
+              className={`tl-fade ${fadeOut.type}`}
+              style={{ width: `${(fadeOut.duration_sec / s.duration_sec) * 100}%` }}
+              title={
+                fadeOut.type === "beat_crossfade"
+                  ? `${fadeOut.beats ?? ""} vuruşluk crossfade (${fadeOut.duration_sec.toFixed(1)} sn) · sonraki parçanın temposu ` +
+                    `${(fadeOut.tempo_change_pct ?? 0) >= 0 ? "+" : "−"}${Math.abs(fadeOut.tempo_change_pct ?? 0).toFixed(1)}% ` +
+                    `(ton değişmeden) · vuruş hizalama ${Math.abs(fadeOut.align_ms ?? 0).toFixed(0)} ms`
+                  : `Güvenli fade (${fadeOut.duration_sec.toFixed(1)} sn): tempolar vuruş eşleştirmeye uygun değil`
+              }
+            />
           )}
         </div>
       ))}

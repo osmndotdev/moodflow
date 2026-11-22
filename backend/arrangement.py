@@ -27,6 +27,8 @@ class TrackAnalysis:
     beat_times: np.ndarray
     beat_confidence: float
     rms: np.ndarray  # linear RMS per frame
+    path: Path | None = None  # source file, for fine alignment on short slices
+    bass_onset: np.ndarray | None = None  # low-frequency onset strength per frame (kick/bass hits)
 
     @property
     def frame_sec(self) -> float:
@@ -60,7 +62,8 @@ def analyze_track(path: Path, max_minutes: float = 8) -> TrackAnalysis:
     tempo, beats = librosa.beat.beat_track(y=y, sr=sr, hop_length=HOP)
     beat_times = librosa.frames_to_time(beats, sr=sr, hop_length=HOP)
     bpm = float(np.atleast_1d(tempo)[0]) or None
-    return TrackAnalysis(duration, bpm, beat_times, beat_confidence(beat_times), rms)
+    bass = librosa.onset.onset_strength(y=y, sr=sr, hop_length=HOP, fmax=200, n_mels=32)
+    return TrackAnalysis(duration, bpm, beat_times, beat_confidence(beat_times), rms, Path(path), bass)
 
 
 def beat_confidence(beat_times: np.ndarray) -> float:
@@ -149,30 +152,198 @@ def segment_length(n: int, transition_total: float) -> float:
     return float(np.clip((TARGET_TOTAL_SEC + transition_total) / n, MIN_SEG, MAX_SEG))
 
 
+# --------------------------------------------------------------------------- beat alignment
+
+MAX_STRETCH = 0.08     # never change a segment's tempo by more than ±8 % (pitch is preserved)
+ALIGN_HOP = 128        # ~5.8 ms resolution for the fine alignment
+STRONG_BEAT_SEARCH = 2  # look ±2 beats for the strongest bass hit (rough bar-start stand-in)
+
+
+def local_period(beats: np.ndarray, t: float, n: int = 16) -> float | None:
+    """Beat period around time ``t``: slope of a line fitted through ~``n`` beats.
+
+    Beat times are quantised to the analysis frame (~23 ms), so a median of intervals is off
+    by a few percent; the fitted slope is precise to well under a millisecond per beat.
+    """
+    if len(beats) < 4:
+        return None
+    i = int(np.argmin(np.abs(beats - t)))
+    lo, hi = max(0, i - n // 2), min(len(beats), i + n // 2 + 1)
+    seg = beats[lo:hi]
+    if len(seg) < 4:
+        return None
+    ibi = np.diff(seg)
+    keep = np.abs(ibi - np.median(ibi)) < 0.25 * np.median(ibi)  # drop skipped / doubled beats
+    if keep.sum() < 3:
+        return float(np.median(ibi))
+    idx = np.concatenate([[0], np.cumsum(np.where(keep, 1, np.round(ibi / np.median(ibi))))])
+    slope = np.polyfit(idx, seg, 1)[0]
+    return float(slope)
+
+
+def fold_ratio(target_period: float, period: float) -> float:
+    """Stretch factor f (play ``f``× faster) that makes ``period`` match ``target_period``,
+    allowing half/double time. Returned so that |f - 1| is smallest."""
+    cands = [period / target_period, (period / 2) / target_period, (period * 2) / target_period]
+    return min(cands, key=lambda f: abs(f - 1))
+
+
+def beat_strength(a: TrackAnalysis, t: float) -> float:
+    if a.bass_onset is None:
+        return 0.0
+    i = int(round(t / a.frame_sec))
+    lo, hi = max(0, i - 2), min(len(a.bass_onset), i + 3)
+    return float(a.bass_onset[lo:hi].max()) if hi > lo else 0.0
+
+
+def _onset_slice(a: TrackAnalysis, start: float, dur: float) -> tuple[np.ndarray, float]:
+    """Fine onset envelope of a slice of the source (times relative to ``start``)."""
+    import librosa
+
+    y, sr = librosa.load(str(a.path), sr=ANALYSIS_SR, mono=True, offset=max(0.0, start), duration=dur)
+    # bass band only: kicks / bass notes define the groove; full-band onsets let snares and
+    # hi-hats pull the alignment onto the off-beat
+    env = librosa.onset.onset_strength(y=y, sr=sr, hop_length=ALIGN_HOP, fmax=200, n_mels=32)
+    lead = max(0.0, -start)  # slice clipped at 0 → pad so index 0 still means ``start``
+    if lead:
+        env = np.concatenate([np.zeros(int(round(lead * sr / ALIGN_HOP))), env])
+    return env, ALIGN_HOP / sr
+
+
+def fine_lag(a: TrackAnalysis, a_start: float, f_a: float, b: TrackAnalysis, b_start: float, f_b: float,
+             overlap_out: float, max_lag_out: float) -> float:
+    """Output-time lag L (s) of B's onsets relative to A's over the overlap; B is late when L > 0.
+
+    Both sides are compared in *output* time (after their tempo stretch), at ~6 ms resolution.
+    """
+    if a.path is None or b.path is None:
+        return 0.0
+    try:
+        env_a, step = _onset_slice(a, a_start, overlap_out * f_a)
+        margin = max_lag_out * f_b
+        env_b, _ = _onset_slice(b, b_start - margin, overlap_out * f_b + 2 * margin)
+    except Exception:  # noqa: BLE001 — alignment is a refinement; never fail the mix over it
+        return 0.0
+    t_out = np.arange(0, overlap_out, step)
+    oa = np.interp(t_out * f_a, np.arange(len(env_a)) * step, env_a, right=0)
+    tb_src = np.arange(len(env_b)) * step - margin  # source time relative to b_start
+    best, best_score = 0.0, -np.inf
+    oa = oa - oa.mean()
+    for k in range(-int(max_lag_out / step), int(max_lag_out / step) + 1):
+        lag = k * step
+        ob = np.interp((t_out + lag) * f_b, tb_src, env_b, left=0, right=0)
+        score = float(np.dot(oa, ob - ob.mean()))
+        if score > best_score:
+            best, best_score = lag, score
+    return best
+
+
 def build_plan(items: list[tuple[str, TrackAnalysis]]) -> dict:
-    """items: [(occurrence_id, analysis)] in mix order (≥ 2)."""
+    """items: [(occurrence_id, analysis)] in mix order (≥ 2).
+
+    Beat crossfades are beat-locked: the overlap starts on a beat of the outgoing segment and
+    spans a whole number of its beats, the incoming segment is tempo-matched (pitch-preserving
+    stretch, ≤ ±8 %), both edges sit on the strongest nearby bass hit, and a fine onset
+    cross-correlation removes the remaining offset.
+    """
     if len(items) < 2:
         raise ValueError("en az iki parça gerekli")
+    kinds = [plan_transition(a, b) for (_, a), (_, b) in zip(items, items[1:])]
+    seg_len = segment_length(len(items), sum(d for _, d in kinds))
+
+    segs = []
+    for oid, a in items:
+        start, duration, _ = choose_segment(a, seg_len)
+        segs.append({"id": oid, "a": a, "start": start, "end": start + duration, "f": 1.0})
+
     transitions = []
-    for (ida, a), (idb, b) in zip(items, items[1:]):
-        kind, dur = plan_transition(a, b)
-        transitions.append({"from": ida, "to": idb, "type": kind, "duration_sec": dur})
-    seg_len = segment_length(len(items), sum(t["duration_sec"] for t in transitions))
+    for i, (kind, dur) in enumerate(kinds):
+        A, B = segs[i], segs[i + 1]
+        a, b = A["a"], B["a"]
+        t = {"from": A["id"], "to": B["id"], "type": "safe_fade", "duration_sec": SAFE_FADE_SEC}
+        locked = kind == "beat_crossfade" and _lock_beats(A, B, t)
+        if not locked:
+            t.update(type="safe_fade", duration_sec=SAFE_FADE_SEC)
+        transitions.append(t)
 
     segments = []
-    for idx, (oid, a) in enumerate(items):
-        start, duration, seg_db = choose_segment(a, seg_len)
+    for s_ in segs:
+        a = s_["a"]
+        src_dur = s_["end"] - s_["start"]
+        fr = a.frame_sec
+        i0, i1 = int(s_["start"] / fr), min(len(a.rms), int(s_["end"] / fr))
+        seg_db = 10 * np.log10(max(float(np.mean(a.rms[i0:i1] ** 2)), 1e-10))
         segments.append({
-            "id": oid,
-            "start_sec": start,
-            "duration_sec": duration,
+            "id": s_["id"],
+            "start_sec": round(s_["start"], 4),
+            "source_duration_sec": round(src_dur, 4),
+            "stretch": round(s_["f"], 5),          # played this many times faster (1 = unchanged)
+            "duration_sec": round(src_dur / s_["f"], 4),  # length in the mix
             "gain_db": round(float(np.clip(TARGET_RMS_DB - seg_db, -12, 9)), 2),
-            "bpm": round(a.bpm, 1) if a.bpm else None,
+            "bpm": round(a.bpm * s_["f"], 1) if a.bpm else None,
             "beat_confidence": round(a.beat_confidence, 2),
         })
-    # crossfade can't exceed half of either neighbouring segment
     for i, t in enumerate(transitions):
-        limit = 0.45 * min(segments[i]["duration_sec"], segments[i + 1]["duration_sec"])
-        t["duration_sec"] = round(min(t["duration_sec"], limit), 3)
+        if t["type"] == "safe_fade":  # beat crossfades were already sized to fit
+            limit = 0.45 * min(segments[i]["duration_sec"], segments[i + 1]["duration_sec"])
+            t["duration_sec"] = round(min(t["duration_sec"], limit), 4)
     total = sum(s["duration_sec"] for s in segments) - sum(t["duration_sec"] for t in transitions)
     return {"segments": segments, "transitions": transitions, "total_duration_sec": round(total, 2)}
+
+
+def _lock_beats(A: dict, B: dict, t: dict) -> bool:
+    """Make A→B a beat-locked crossfade in place (A's end, B's start and stretch). False → safe fade."""
+    a, b = A["a"], B["a"]
+    ba, bb = a.beat_times, b.beat_times
+    if len(ba) < 12 or len(bb) < 12:
+        return False
+    pa = local_period(ba, A["end"])
+    pb = local_period(bb, B["start"])
+    if not pa or not pb:
+        return False
+    pa_out = pa / A["f"]                       # A's beat period as heard in the mix
+    f_b = fold_ratio(pa_out, pb)
+    if abs(f_b - 1) > MAX_STRETCH:
+        return False
+
+    # A ends exactly on one of its beats; the overlap is k of A's beats back from there.
+    j0 = int(np.argmin(np.abs(ba - A["end"])))
+    a_first = int(np.searchsorted(ba, A["start"] - 1e-6))
+    best = None
+    for k in (8, 16, 4):
+        if not 3.0 <= k * pa_out <= 6.0:
+            continue
+        for j in range(j0 - STRONG_BEAT_SEARCH, j0 + STRONG_BEAT_SEARCH + 1):
+            if j - k < a_first or j >= len(ba) or ba[j] > a.duration - 0.25:
+                continue
+            seg_out = (ba[j] - A["start"]) / A["f"]
+            d_out = (ba[j] - ba[j - k]) / A["f"]
+            if d_out > 0.45 * seg_out:
+                continue
+            score = beat_strength(a, ba[j - k])  # land the incoming song on a strong hit
+            if best is None or score > best[0]:
+                best = (score, j, k, d_out)
+        if best:
+            break
+    if not best:
+        return False
+    _, j, k, d_out = best
+
+    # B starts on its strongest beat near the planned start, then the fine alignment trims the rest.
+    i0 = int(np.argmin(np.abs(bb - B["start"])))
+    cands = [i for i in range(i0 - STRONG_BEAT_SEARCH, i0 + STRONG_BEAT_SEARCH + 1)
+             if 0 <= i < len(bb) and bb[i] + d_out * f_b < b.duration - 1]
+    if not cands:
+        return False
+    ib = max(cands, key=lambda i: beat_strength(b, bb[i]))
+    b_start = float(bb[ib])
+    lag = fine_lag(a, float(ba[j - k]), A["f"], b, b_start, f_b, d_out, max_lag_out=0.25 * pa_out)
+    b_start = max(0.0, b_start + lag * f_b)   # B late by `lag` → start it later in its source
+
+    # keep B's planned length (in its own source time) after moving its start
+    length = B["end"] - B["start"]
+    A["end"] = float(ba[j])
+    B["start"], B["end"], B["f"] = b_start, min(b.duration - 0.25, b_start + length), f_b
+    t.update(type="beat_crossfade", duration_sec=round(d_out, 4), beats=k,
+             tempo_change_pct=round((f_b - 1) * 100, 2), align_ms=round(lag * 1000, 1))
+    return True

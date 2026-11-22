@@ -109,7 +109,15 @@ export interface MixTrackProgress {
 
 export interface MixPlan {
   segments: { id: string; start_sec: number; duration_sec: number; gain_db: number; bpm: number | null }[];
-  transitions: { from: string; to: string; type: "beat_crossfade" | "safe_fade"; duration_sec: number }[];
+  transitions: {
+    from: string;
+    to: string;
+    type: "beat_crossfade" | "safe_fade";
+    duration_sec: number;
+    beats?: number; // beat crossfades: overlap length in the outgoing song's beats
+    tempo_change_pct?: number; // incoming segment sped up (+) / slowed down (−), pitch preserved
+    align_ms?: number; // fine shift applied to line up the kicks
+  }[];
   total_duration_sec: number;
 }
 
