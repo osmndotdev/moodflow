@@ -50,6 +50,7 @@ import ExportPanel from "./ExportPanel";
 import FlowChart from "./FlowChart";
 import PreviewPlayer, { PreviewButton } from "./PreviewPlayer";
 import WeightBar from "./WeightBar";
+import { OPEN_CONSENT_EVENT, clarityProjectId } from "./consent";
 
 const EXAMPLES: { platform: Platform; label: string; url: string }[] = [
   { platform: "youtube", label: "80s Synth-Pop", url: "https://www.youtube.com/playlist?list=PLGBuKfnErZlAKsNDquW0QoEYZle-NMmDL" },
@@ -1244,7 +1245,16 @@ export default function App() {
 
       <footer className="muted small">
         MoodFlow demo · React + FastAPI + yt-dlp + librosa + FFmpeg ·{" "}
-        <a href="https://getsongbpm.com" target="_blank" rel="noreferrer">BPM &amp; key data by GetSongBPM</a>
+        <a href="https://getsongbpm.com" target="_blank" rel="noreferrer">BPM &amp; key data by GetSongBPM</a> ·{" "}
+        <a href="/privacy/">Gizlilik</a>
+        {clarityProjectId() && (
+          <>
+            {" · "}
+            <button type="button" className="link-btn" onClick={() => window.dispatchEvent(new Event(OPEN_CONSENT_EVENT))}>
+              Çerez tercihleri
+            </button>
+          </>
+        )}
       </footer>
     </div>
   );

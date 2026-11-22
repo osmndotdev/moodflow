@@ -89,10 +89,19 @@ runs `MOODFLOW_RESTART_CMD` from `.env` (e.g. `sudo systemctl restart moodflow`)
 you to restart the backend yourself. Changes to `.env` itself also only take effect after a restart.
 
 Analytics: the VPS deployment uses [Microsoft Clarity](https://clarity.microsoft.com). Put
-`MOODFLOW_CLARITY_ID=zhr0drdbro` in the **VPS** `.env` only and restart; the backend then adds the Clarity
-tag to the page it serves (`backend/analytics.py`). With the variable empty (the default) no tag is sent,
-so local dev (Vite on :5173) and local single-port runs collect nothing; the tag also skips itself when
-the page is opened as `localhost` / `127.x` / `[::1]` (e.g. through an SSH tunnel).
+`MOODFLOW_CLARITY_ID=zhr0drdbro` in the **VPS** `.env` only and restart; the backend then puts the project
+ID into the page it serves (`backend/analytics.py`), and the page shows a cookie banner
+(`frontend/src/ConsentBanner.tsx`, `consent.ts`). Clarity's tag loads only after the visitor clicks
+"Kabul et" (with a `consentv2` granted signal; "Reddet" loads nothing). The choice is kept in localStorage
+for 12 months and can be changed from the footer's "Çerez tercihleri" link or `/#cerezler`; withdrawing
+deletes Clarity's cookies and reloads. With the variable empty (the default) there is no banner and no
+tag, so local dev (Vite on :5173) and local single-port runs collect nothing; the same holds when the page
+is opened as `localhost` / `127.x` / `[::1]` (e.g. through an SSH tunnel).
+
+Privacy policy: `frontend/privacy/index.html` (Turkish, KVKK + GDPR), a second Vite page served at
+`/privacy/` and linked from the footer and the banner; it can also serve as the privacy policy URL of the
+Google OAuth consent screen. Update it (and its date) when the data the app handles changes: new feature
+providers, cookies or storage keys, retention times (`MOODFLOW_*_TTL`, provider cache days) or analytics.
 
 Tests (offline, ~10 s; downloads and network are faked, audio is synthesized):
 
