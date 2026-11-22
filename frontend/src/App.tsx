@@ -478,8 +478,27 @@ function pipelineIndex(status: MixStatus | null): number {
   return 0;
 }
 
-function Timeline({ plan, tracks, playTime }: { plan: MixPlan; tracks: Track[]; playTime: number | null }) {
+function Timeline({
+  plan,
+  tracks,
+  playTime,
+  onSeek,
+}: {
+  plan: MixPlan;
+  tracks: Track[];
+  playTime: number | null;
+  /** when set (mix ready), clicking / dragging / arrow keys on the timeline seek the player */
+  onSeek?: (t: number) => void;
+}) {
   const total = plan.total_duration_sec;
+  const boxRef = useRef<HTMLDivElement>(null);
+  const scrubbing = useRef(false);
+  const [hover, setHover] = useState<number | null>(null); // time under the pointer
+  const timeAt = (clientX: number) => {
+    const r = boxRef.current!.getBoundingClientRect();
+    return Math.min(total, Math.max(0, ((clientX - r.left) / r.width) * total));
+  };
+  const seekable = !!onSeek;
   const byId = Object.fromEntries(tracks.map((t) => [t.occurrence_id, t]));
   let cursor = 0;
   const blocks = plan.segments.map((s, i) => {
@@ -490,8 +509,42 @@ function Timeline({ plan, tracks, playTime }: { plan: MixPlan; tracks: Track[]; 
   });
   // the segment under the playhead: the latest one that has started (crossfades overlap)
   const active = playTime == null ? -1 : blocks.reduce((acc, b, i) => (playTime >= b.start ? i : acc), -1);
+  const songAt = (t: number) => byId[blocks[blocks.reduce((acc, b, k) => (t >= b.start ? k : acc), 0)].s.id]?.title;
   return (
-    <div className="timeline">
+    <div
+      ref={boxRef}
+      className={`timeline ${seekable ? "seekable" : ""}`}
+      {...(seekable && {
+        role: "slider",
+        tabIndex: 0,
+        "aria-label": "Miks konumu (tıklayın veya sürükleyin; ←/→ 5 sn)",
+        "aria-valuemin": 0,
+        "aria-valuemax": Math.round(total),
+        "aria-valuenow": Math.round(playTime ?? 0),
+        "aria-valuetext": `${fmtTime(playTime ?? 0)} / ${fmtTime(total)}`,
+        onPointerDown: (e: React.PointerEvent<HTMLDivElement>) => {
+          e.currentTarget.setPointerCapture(e.pointerId);
+          scrubbing.current = true;
+          onSeek!(timeAt(e.clientX));
+        },
+        onPointerMove: (e: React.PointerEvent<HTMLDivElement>) => {
+          const t = timeAt(e.clientX);
+          setHover(t);
+          if (scrubbing.current) onSeek!(t);
+        },
+        onPointerUp: () => (scrubbing.current = false),
+        onPointerCancel: () => (scrubbing.current = false),
+        onPointerLeave: () => setHover(null),
+        onKeyDown: (e: React.KeyboardEvent) => {
+          const now = playTime ?? 0;
+          const to =
+            e.key === "ArrowRight" ? now + 5 : e.key === "ArrowLeft" ? now - 5 : e.key === "Home" ? 0 : e.key === "End" ? total : null;
+          if (to == null) return;
+          e.preventDefault();
+          onSeek!(Math.min(total, Math.max(0, to)));
+        },
+      })}
+    >
       {blocks.map(({ s, start, fadeOut }, i) => (
         <div
           key={s.id}
@@ -518,6 +571,14 @@ function Timeline({ plan, tracks, playTime }: { plan: MixPlan; tracks: Track[]; 
       {playTime != null && playTime > 0 && (
         <span className="tl-playhead" style={{ left: `${Math.min(100, (playTime / total) * 100)}%` }} aria-hidden="true" />
       )}
+      {seekable && hover != null && (
+        <span className="tl-ghost" style={{ left: `${(hover / total) * 100}%` }} aria-hidden="true">
+          <span className="tl-ghost-time">
+            {fmtTime(hover)}
+            {songAt(hover) ? ` · ${songAt(hover)}` : ""}
+          </span>
+        </span>
+      )}
     </div>
   );
 }
@@ -541,6 +602,13 @@ function MixPanel({
   const idx = pipelineIndex(status);
   const [playing, setPlaying] = useState(false);
   const [playTime, setPlayTime] = useState(0);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const seek = (t: number) => {
+    const a = audioRef.current;
+    if (!a) return;
+    a.currentTime = t;
+    setPlayTime(t); // move the playhead immediately, even while paused
+  };
   useEffect(() => {
     setPlaying(false);
     setPlayTime(0);
@@ -614,6 +682,7 @@ function MixPanel({
           {status.status === "done" && status.audio_url && (
             <div className="player">
               <audio
+                ref={audioRef}
                 controls
                 autoPlay
                 src={status.audio_url}
@@ -634,7 +703,12 @@ function MixPanel({
             </div>
           )}
           {status.plan && (
-            <Timeline plan={status.plan} tracks={tracks} playTime={status.status === "done" ? playTime : null} />
+            <Timeline
+              plan={status.plan}
+              tracks={tracks}
+              playTime={status.status === "done" ? playTime : null}
+              onSeek={status.status === "done" && status.audio_url ? seek : undefined}
+            />
           )}
           {status.plan && (
             <p className="legend-row muted">

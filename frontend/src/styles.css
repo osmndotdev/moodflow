@@ -1580,3 +1580,44 @@ h2 svg {
   padding: 6px 13px;
   font-size: 13px;
 }
+
+/* click / drag the timeline to seek */
+.timeline.seekable {
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  outline: none;
+  border-radius: 6px;
+}
+.timeline.seekable:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.timeline.seekable .tl-seg {
+  pointer-events: none; /* the whole strip is the hit target; tooltips stay on the fades */
+}
+.timeline.seekable .tl-fade {
+  pointer-events: auto;
+}
+.tl-ghost {
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  width: 1px;
+  background: color-mix(in oklab, var(--text) 55%, transparent);
+  pointer-events: none;
+  z-index: 2;
+}
+.tl-ghost-time {
+  position: absolute;
+  top: -20px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
