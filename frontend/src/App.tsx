@@ -758,7 +758,7 @@ export default function App() {
 
   const tracks = useMemo(() => playlist?.tracks ?? [], [playlist]);
   // "ignore songs with missing data": anything with at least one of the five features empty
-  const [ignoreMissing, setIgnoreMissing] = useState(false);
+  const [ignoreMissing, setIgnoreMissing] = useState(true);
   const incomplete = useMemo(() => tracks.filter((t) => t.features.missing_features?.length), [tracks]);
   const canIgnore = incomplete.length > 0 && tracks.length - incomplete.length >= 3;
   const ignoring = ignoreMissing && canIgnore;
