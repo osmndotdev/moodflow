@@ -134,6 +134,51 @@ export interface MixStatus {
   feature_updates: Record<string, Features>;
 }
 
+export type ExportProvider = "spotify" | "youtube";
+
+export interface ExportProviders {
+  spotify: { configured: boolean; redirect_uri: string };
+  youtube: { configured: boolean; redirect_uri: string };
+}
+
+export interface ConnectPoll {
+  status: "pending" | "connected" | "failed" | "expired";
+  connection_id: string | null;
+  account: string | null;
+  error: string | null;
+}
+
+export type ExportItemStatus = "pending" | "matching" | "matched" | "added" | "not_found" | "failed";
+
+export interface ExportStatus {
+  export_id: string;
+  provider: ExportProvider;
+  status: "processing" | "done" | "failed";
+  stage: "matching" | "creating" | "adding" | "done" | "failed";
+  playlist_name: string;
+  playlist_url: string | null;
+  added: number;
+  items: {
+    occurrence_id: string;
+    title: string;
+    artist: string;
+    status: ExportItemStatus;
+    target_id: string | null;
+    message: string | null;
+  }[];
+  warnings: string[];
+  error: string | null;
+}
+
+/** Error with the HTTP status, so callers can tell "not connected" (401) from other failures. */
+export class ApiError extends Error {
+  status: number;
+  constructor(message: string, status: number) {
+    super(message);
+    this.status = status;
+  }
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   let res: Response;
   try {
@@ -152,7 +197,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     } catch {
       /* not json */
     }
-    throw new Error(detail);
+    throw new ApiError(detail, res.status);
   }
   return res.json() as Promise<T>;
 }
@@ -172,4 +217,30 @@ export const api = {
     }),
   mixStatus: (id: string) => request<MixStatus>(`/api/mix/${id}`),
   health: () => request<Health>("/api/health"),
+
+  exportProviders: () => request<ExportProviders>("/api/export/providers"),
+  exportConnect: (p: ExportProvider) =>
+    request<{ state: string; auth_url: string }>(`/api/export/${p}/connect`, { method: "POST" }),
+  exportPoll: (p: ExportProvider, state: string) =>
+    request<ConnectPoll>(`/api/export/${p}/connect/${encodeURIComponent(state)}`),
+  exportAccount: (p: ExportProvider, connection: string) =>
+    request<{ connected: boolean; account: string | null }>(`/api/export/${p}/account`, {
+      headers: { "X-Export-Connection": connection },
+    }),
+  exportDisconnect: (p: ExportProvider, connection: string) =>
+    request<{ connected: boolean }>(`/api/export/${p}/account`, {
+      method: "DELETE",
+      headers: { "X-Export-Connection": connection },
+    }),
+  startExport: (
+    p: ExportProvider,
+    connection: string,
+    body: { tracks: Track[]; ordered_ids: string[]; name: string; description: string; public: boolean },
+  ) =>
+    request<ExportStatus>(`/api/export/${p}`, {
+      method: "POST",
+      headers: { "X-Export-Connection": connection },
+      body: JSON.stringify(body),
+    }),
+  exportStatus: (id: string) => request<ExportStatus>(`/api/export/jobs/${id}`),
 };

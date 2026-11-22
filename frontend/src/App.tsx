@@ -46,6 +46,7 @@ import {
   type TrackStage,
   type Weights,
 } from "./api";
+import ExportPanel from "./ExportPanel";
 import FlowChart from "./FlowChart";
 import WeightBar from "./WeightBar";
 
@@ -1178,6 +1179,14 @@ export default function App() {
             tracks={tracks}
             onStart={startMix}
             disabled={!ranking}
+          />
+
+          <ExportPanel
+            tracks={activeTracks}
+            orderedIds={ranking?.ordered_ids ?? null}
+            defaultName={`${playlist.playlist_title ?? "Playlist"} · MoodFlow ${MODES.find((m) => m.id === mode)?.label ?? ""}`.trim()}
+            description={`MoodFlow ile ${MODES.find((m) => m.id === mode)?.label ?? ""} modunda yeniden sıralandı.`}
+            mixStatus={mixStatus}
           />
         </>
       )}

@@ -131,3 +131,39 @@ class MixStatus(BaseModel):
     plan: dict | None = None
     # features filled locally from the downloaded recordings (BPM / energy no provider had)
     feature_updates: dict[str, Features] = {}
+
+
+# --------------------------------------------------------------------------- playlist export
+
+ExportProvider = Literal["spotify", "youtube"]
+ExportItemStatus = Literal["pending", "matching", "matched", "added", "not_found", "failed"]
+
+
+class ExportRequest(BaseModel):
+    tracks: list[Track]
+    ordered_ids: list[str]
+    name: str = Field("MoodFlow", max_length=150)
+    description: str = Field("", max_length=300)
+    public: bool = False
+
+
+class ExportItem(BaseModel):
+    occurrence_id: str
+    title: str
+    artist: str
+    status: ExportItemStatus = "pending"
+    target_id: str | None = None  # spotify:track:… URI or YouTube video id
+    message: str | None = None
+
+
+class ExportStatus(BaseModel):
+    export_id: str
+    provider: ExportProvider
+    status: Literal["processing", "done", "failed"]
+    stage: Literal["matching", "creating", "adding", "done", "failed"] = "matching"
+    playlist_name: str
+    playlist_url: str | None = None
+    added: int = 0
+    items: list[ExportItem] = []
+    warnings: list[str] = []
+    error: str | None = None

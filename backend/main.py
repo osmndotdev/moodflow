@@ -10,22 +10,23 @@ import uuid
 import warnings
 from contextlib import asynccontextmanager
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
+from html import escape
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import arrangement, audio_sources, mixing
+from . import arrangement, audio_sources, exporters, mixing
 from .analytics import clarity_id, inject_clarity
 from .features import FeatureService, build_feature_service, fill_from_downloaded_audio
 from .importers import PlaylistImportError, import_playlist
 from .ranking import rank
 from .schemas import (
-    ImportRequest, ImportResponse, MixRequest, MixStartResponse, MixStatus,
-    MixTrackProgress, RankRequest, RankResponse, Track,
+    ExportProvider, ExportRequest, ExportStatus, ImportRequest, ImportResponse, MixRequest,
+    MixStartResponse, MixStatus, MixTrackProgress, RankRequest, RankResponse, Track,
 )
 
 logging.basicConfig(level=os.getenv("MOODFLOW_LOG", "INFO"))
@@ -64,6 +65,9 @@ feature_service: FeatureService = build_feature_service(cache_file=CACHE_DIR / "
 jobs: dict[str, MixStatus] = {}
 jobs_lock = threading.Lock()
 job_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="mix")
+# playlist export: OAuth tokens of connected accounts persist across reloads (0600 file in tmp/)
+oauth = exporters.OAuthManager(exporters.load_configs(), exporters.ConnectionStore(TMP / "oauth" / "connections.json"))
+export_service = exporters.ExportService(oauth)
 
 
 # --------------------------------------------------------------------------- housekeeping
@@ -263,6 +267,89 @@ def api_audio(mix_id: str) -> FileResponse:
     return FileResponse(path, media_type="audio/mpeg", filename="moodflow-mix.mp3")
 
 
+# --------------------------------------------------------------------------- playlist export
+
+def _export_http_error(err: exporters.ExportError) -> HTTPException:
+    return HTTPException(status_code=401 if isinstance(err, exporters.NotConnected) else 422, detail=str(err))
+
+
+@app.get("/api/export/providers")
+def api_export_providers() -> dict:
+    return oauth.providers()
+
+
+@app.post("/api/export/{provider}/connect")
+def api_export_connect(provider: ExportProvider) -> dict:
+    """Start OAuth: the page opens ``auth_url`` in a popup and polls ``state``."""
+    try:
+        return oauth.begin(provider)
+    except exporters.ExportError as err:
+        raise _export_http_error(err) from err
+
+
+@app.get("/api/export/{provider}/callback", response_class=HTMLResponse)
+def api_export_callback(provider: ExportProvider, state: str | None = None, code: str | None = None,
+                        error: str | None = None) -> HTMLResponse:
+    try:
+        entry = oauth.complete(provider, state, code, error)
+    except exporters.ExportError as err:
+        entry = {"status": "failed", "error": str(err)}
+    label = exporters.PROVIDER_LABEL[provider]
+    if entry["status"] == "connected":
+        title, text = f"{label} bağlandı", f"{entry.get('account') or 'Hesap'} bağlandı. Bu pencere kapanabilir."
+    else:
+        title, text = f"{label} bağlanamadı", entry.get("error") or "Bağlantı başarısız."
+    # no tokens or ids in this page: the opener learns the result by polling its state
+    page = f"""<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width">
+<title>{escape(title)}</title>
+<body style="font:16px system-ui,sans-serif;display:grid;place-items:center;min-height:90vh;text-align:center">
+<div><h2>{escape(title)}</h2><p>{escape(text)}</p></div>
+<script>try {{ window.opener && window.opener.postMessage("moodflow-oauth", "*"); }} catch (e) {{}}
+setTimeout(function () {{ window.close(); }}, {1200 if entry["status"] == "connected" else 6000});</script>"""
+    return HTMLResponse(page)
+
+
+@app.get("/api/export/{provider}/connect/{state}")
+def api_export_poll(provider: ExportProvider, state: str) -> dict:
+    return oauth.poll(provider, state)
+
+
+@app.get("/api/export/{provider}/account")
+def api_export_account(provider: ExportProvider,
+                       x_export_connection: str | None = Header(default=None)) -> dict:
+    try:
+        conn = oauth.connection(provider, x_export_connection)
+    except exporters.ExportError as err:
+        raise _export_http_error(err) from err
+    return {"connected": True, "account": conn.get("account")}
+
+
+@app.delete("/api/export/{provider}/account")
+def api_export_disconnect(provider: ExportProvider,
+                          x_export_connection: str | None = Header(default=None)) -> dict:
+    oauth.disconnect(provider, x_export_connection)
+    return {"connected": False}
+
+
+@app.post("/api/export/{provider}", response_model=ExportStatus)
+def api_export(provider: ExportProvider, req: ExportRequest,
+               x_export_connection: str | None = Header(default=None)) -> ExportStatus:
+    by_id = {t.occurrence_id: t for t in req.tracks}
+    ordered = [by_id[i] for i in req.ordered_ids if i in by_id]
+    try:
+        return export_service.start(provider, x_export_connection, ordered, req.name, req.description, req.public)
+    except exporters.ExportError as err:
+        raise _export_http_error(err) from err
+
+
+@app.get("/api/export/jobs/{export_id}", response_model=ExportStatus)
+def api_export_status(export_id: str) -> ExportStatus:
+    job = export_service.status(export_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Dışa aktarma bulunamadı.")
+    return job
+
+
 @app.get("/api/health")
 def health() -> dict:
     return {
@@ -271,6 +358,7 @@ def health() -> dict:
         "ffprobe": bool(shutil.which("ffprobe")),
         # provider → null when active, otherwise why it is skipped (keys themselves are never exposed)
         "feature_providers": feature_service.status(),
+        "export_providers": {p: c["configured"] for p, c in oauth.providers().items()},
         "provider_cache": {"entries": len(feature_service.cache), "usage_since_start": feature_service.total_usage},
     }
 

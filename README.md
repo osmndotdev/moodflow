@@ -6,7 +6,9 @@ Paste a **public YouTube, Spotify or Apple Music playlist URL** → MoodFlow rea
 first 6 suitable tracks from YouTube with **yt-dlp**, picks the strongest sections, joins them with long
 beat-locked crossfades (tempo-matched, kick-aligned) and renders a ~3 min MP3 you can play and scrub in the page.
 
-No login, no OAuth, nothing is written back to YouTube/Spotify, no uploads.
+No login is needed to use it, and the source playlist is never changed. Optionally, a user can connect
+their own **Spotify** or **YouTube Music** account (OAuth) and save the MoodFlow order there as a new
+playlist (an addition the v1.8 plan, which rules out login and export, doesn't have).
 
 ## Requirements
 
@@ -16,7 +18,7 @@ No login, no OAuth, nothing is written back to YouTube/Spotify, no uploads.
 - Recommended on servers: [Deno](https://deno.com) on `PATH`. yt-dlp uses a JavaScript runtime for some
   YouTube player checks; downloads currently also work without one, but YouTube changes often.
 - Internet access (YouTube, Spotify embed page, feature APIs)
-- **API keys (server-side, developer-owned; no end-user auth):** copy `.env.example` → `.env` and fill in
+- **API keys (server-side, developer-owned):** copy `.env.example` → `.env` and fill in
   - `FREQBLOG_API_KEY` — primary source for all five features. Free key (1,000 lookups/month, no card): https://freqblog.com/#pricing
   - `GETSONGBPM_API_KEY` (missing BPM/key) and `LASTFM_API_KEY` (missing genre) — optional fallbacks, skipped when empty.
     The page footer always carries the "BPM & key data by GetSongBPM" backlink its free tier requires.
@@ -24,6 +26,17 @@ No login, no OAuth, nothing is written back to YouTube/Spotify, no uploads.
   Without keys the app still runs: BPM and key come from ReccoBeats (keyless) where it knows the track and
   genre from MusicBrainz where it answers in time. Energy and mood stay empty before the mix, since v1.8
   forbids inventing them; missing BPM/energy is measured from the downloaded audio once a mix runs.
+- **Playlist export (optional):** OAuth apps, one per platform. Without them the "Playlist olarak kaydet"
+  panel says export isn't set up; everything else works. The redirect URIs use `MOODFLOW_PUBLIC_URL`
+  (default `http://127.0.0.1:<MOODFLOW_PORT>`; on a server, its public `https://` origin):
+  - **Spotify:** create an app at https://developer.spotify.com/dashboard (API: *Web API*), add the redirect
+    URI `http://127.0.0.1:8000/api/export/spotify/callback` (Spotify rejects `localhost`), put
+    `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET` in `.env`. In Development Mode the app owner needs Spotify
+    Premium and every account that connects must be added under *User Management* (max 5).
+  - **YouTube Music:** in Google Cloud Console enable *YouTube Data API v3*, set up the OAuth consent screen
+    (External; while *Testing*, add each Google account under *Test users*), create an OAuth client of type
+    *Web application* with the redirect URI `http://127.0.0.1:8000/api/export/youtube/callback`, put
+    `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` in `.env`.
 
 ## Run
 
@@ -85,7 +98,8 @@ Tests (offline, ~10 s; downloads and network are faked, audio is synthesized):
 | Audio | `backend/audio_sources.py` | yt-dlp Python API only. YouTube items use their `video_id`; Spotify and Apple Music items search `ytsearch3:<artist> - <track> audio`, score title/artist/duration/version tags (`live`, `cover`, `remix`, `slowed`…) and **never download a weak match**. WAV 44.1 kHz stereo, cached per video id, per-id lock, duration/filesize limits. |
 | Arrangement | `backend/arrangement.py` | librosa RMS, beat and bass-onset tracking on the downloaded recording (if its BPM disagrees with the metadata, the measured value is used and a warning is shown). Target mix length ~170 s: each segment is the strongest ~25–45 s window (skips silence/intros, starts on a beat). **Beat-locked crossfade** when tempos are within 8 % (half/double time allowed; each song's tempo is a line fit through its beats, since librosa's overall estimate snaps to a grid 3–7 % coarse at fast tempos) and beats are steady: the overlap is a musical phrase of the outgoing song, 16 beats (32 for fast, 8 for slow tempos, 7–12 s), starting and ending exactly on its beats; the incoming segment is tempo-matched with a pitch-preserving stretch (≤ ±8 %) fitted over exactly the overlapping beats; both edges move up to ±2 beats onto the strongest bass hit (rough bar-start stand-in); a bass-band onset cross-correlation (~6 ms resolution) lines up the kicks, and the drift between the overlap's two halves corrects the stretch. Otherwise a 4 s **safe fade**. Per-segment gain toward a common RMS. Transitions carry `beats`, `tempo_change_pct` and `align_ms` (shown in the timeline tooltip). Measured on 58 real song pairs (rendered audio, two independent measures): typical beat offset ~19 ms, kick offset ~12 ms, ~81 % of transitions aligned within 30 ms. |
 | Render | `backend/mixing.py` | One FFmpeg `filter_complex`: trim → `atempo` stretch (pitch preserved) → exact sample-length trim → gain → `acrossfade` chain (lengths in samples, so nothing drifts) → fade in/out → `alimiter` (-2 dBFS) → `preview.mp3`. |
-| API | `backend/main.py` | `POST /api/import`, `POST /api/rank`, `POST /api/mix` (background thread), `GET /api/mix/{id}` (poll; per-track progress + plan JSON), `GET /api/audio/{id}`. Failed/unmatched/corrupt tracks are replaced by the next track in order; fewer than 2 sources → clear failure. |
+| Export | `backend/exporters.py`, `frontend/src/ExportPanel.tsx` | "Hesabı bağla" opens the provider's consent page in a popup (authorization code flow, client secret server-side); the page polls `GET /api/export/{provider}/connect/{state}` until the callback has stored the tokens, then keeps only an opaque connection id in `localStorage` and sends it as `X-Export-Connection`. Tokens live in `tmp/oauth/connections.json` (mode 0600, survives reloads), access tokens are refreshed on expiry, and a rejected refresh drops the connection so the page offers to reconnect. `POST /api/export/{provider}` runs a background job (`GET /api/export/jobs/{id}`): match → create → add, in the MoodFlow order of the songs being ranked. **Spotify** (Feb 2026 Development Mode endpoints): Spotify-imported songs keep their track id, others are searched (`track:… artist:…`, then a plain query, limit 10) and scored like the YouTube matching; `POST /me/playlists`, `POST /playlists/{id}/items` (100 per call). **YouTube Music**: there is no public YouTube Music write API, so the playlist is created with the YouTube Data API v3 and shows up in the YouTube Music library; songs are matched with yt-dlp (no API quota; videos the mix already matched are reused), then `playlists.insert` + one `playlistItems.insert` per song. Songs without a reliable match are left out and listed. Private by default ("Herkese açık" makes it public). |
+| API | `backend/main.py` | `POST /api/import`, `POST /api/rank`, `POST /api/mix` (background thread), `GET /api/mix/{id}` (poll; per-track progress + plan JSON), `GET /api/audio/{id}`, `/api/export/…` (see Export). Failed/unmatched/corrupt tracks are replaced by the next track in order; fewer than 2 sources → clear failure. |
 | UI | `frontend/src/App.tsx`, `FlowChart.tsx`, `WeightBar.tsx` | Single page (icons: `react-icons`): a "Oku → Sırala → Mixle" strip before the first import, replaced during an import by an "analyzing" panel (large equalizer, sweeping bar, rotating step captions and an elapsed-seconds counter; the import reports no real progress, so there is no percentage) → URL box with the supported platforms' icons in front (the one matching the typed URL stays lit) + example playlists (YouTube / Spotify / Apple Music) → feature table (source, status and confidence on hover, ≈ for local values, API usage line, **"Eksik verili şarkıları yok say"** toggle (on by default) that leaves incomplete tracks out of ranking, chart and mix) → mode picker; Custom sets weights on **one bar split into five parts** (drag the boundaries, click a legend chip to switch a feature off, presets, plain-language summary) → chart (Energy / BPM / Valence per position or per-feature transition fit, original vs MoodFlow, Intensity view with the Emotional arc, draggable target curve with presets) → original vs MoodFlow order cards (labelled BPM / key / energy, a plain-language transition row between cards, pin button for the first song) → mix progress (pipeline steps, per-track stages) → player with "now playing" and a segment timeline you can **click or drag to seek** (←/→ ±5 s), with a playhead that highlights the current section. Motion is turned off under `prefers-reduced-motion`. |
 
 ### API cache (saves credits)
@@ -111,6 +125,18 @@ Temporary files live in `tmp/` (mixes expire after 1 h, cached WAVs 48 h after t
 The provider cache is not touched by that cleanup.
 
 ## Known limits (demo scope)
+
+- Playlist export, Spotify: a Development Mode app works only for up to 5 allow-listed accounts (others get
+  a clear 403 message) and only while the app owner has Premium. Opening it to everyone needs Spotify's
+  extended quota, which Spotify grants only to registered businesses.
+- Playlist export, YouTube Music: each export costs 50 + 50 per song of the Google project's 10,000 daily
+  quota units, so about three 50-song exports a day; when the quota runs out the playlist stays partial
+  and the page says so. While the consent screen is in *Testing*, only listed test users can connect and
+  Google expires the connection after 7 days (the page then asks to reconnect); publishing it for all
+  users requires Google's app verification for the `youtube` scope. A Google account without a YouTube
+  channel can't create playlists.
+- Export matching for songs from another platform is a best-effort search; a song without a reliable match
+  is skipped rather than replaced by a guess.
 
 - Without `FREQBLOG_API_KEY` there is no mood or energy data before the mix, and key comes only from
   ReccoBeats, which misses many new releases (8/20 on a current Top Hits playlist) and sometimes reports the
