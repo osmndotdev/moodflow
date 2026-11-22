@@ -12,6 +12,7 @@ import {
   type TrackStage,
   type Weights,
 } from "./api";
+import FlowChart from "./FlowChart";
 
 const EXAMPLES = [
   { label: "YouTube · 80s Synth-Pop", url: "https://www.youtube.com/playlist?list=PLGBuKfnErZlAKsNDquW0QoEYZle-NMmDL" },
@@ -96,7 +97,24 @@ const PROVIDER_LABEL: Record<string, string> = {
   getsongbpm: "GetSongBPM",
   lastfm: "Last.fm",
   musicbrainz: "MusicBrainz",
-  local_preview: "Yerel analiz (önizleme)",
+};
+
+const providerLabel = (src: string) =>
+  PROVIDER_LABEL[src] ??
+  (src.startsWith("local_audio")
+    ? "Yerel analiz (indirilen kayıt)"
+    : src.startsWith("local_rms")
+      ? "Yerel RMS (indirilen kayıt, playlist içi göreceli)"
+      : src.startsWith("derived")
+        ? "FreqBlog valence + energy'den türetildi"
+        : src);
+
+const STATUS_LABEL: Record<string, string> = {
+  ok: "bulundu",
+  derived: "türetildi",
+  local: "yerel ölçüm",
+  missing: "bulunamadı",
+  error: "kaynak hatası (sonraki okumada tekrar denenir)",
 };
 
 const isLocal = (src?: string) => !!src && (src.startsWith("local") || src.startsWith("derived"));
@@ -104,9 +122,16 @@ const isLocal = (src?: string) => !!src && (src.startsWith("local") || src.start
 function Src({ track, name, children }: { track: Track; name: FeatureName; children: React.ReactNode }) {
   const src = track.features.sources?.[name];
   if (!src) return <>{children}</>;
-  const label = PROVIDER_LABEL[src] ?? src;
+  const status = track.features.status?.[name];
+  const conf =
+    name === "key" && track.features.key_confidence != null
+      ? ` · güven ${track.features.key_confidence.toFixed(2)}`
+      : name === "bpm" && track.features.bpm_confidence != null
+        ? ` · güven ${track.features.bpm_confidence.toFixed(1)} (FreqBlog ölçeği)`
+        : "";
+  const title = `Kaynak: ${providerLabel(src)}${status ? ` · durum: ${STATUS_LABEL[status] ?? status}` : ""}${conf}`;
   return (
-    <span className={`src ${isLocal(src) ? "src-local" : ""}`} title={`Kaynak: ${label}`}>
+    <span className={`src ${isLocal(src) ? "src-local" : ""}`} title={title}>
       {isLocal(src) && <span className="approx">≈</span>}
       {children}
     </span>
@@ -119,10 +144,18 @@ function ProviderStatus({ health }: { health: Health | null }) {
     <div className="providers">
       <span className="muted">Özellik kaynakları:</span>
       {Object.entries(health.feature_providers).map(([name, reason]) => (
+        // GetSongBPM's free API requires a visible backlink to getsongbpm.com
+        name === "getsongbpm" && !reason ? (
+          <a key={name} className="prov on" href="https://getsongbpm.com" target="_blank" rel="noreferrer" title="Aktif">
+            <i />
+            GetSongBPM
+          </a>
+        ) : (
         <span key={name} className={`prov ${reason ? "off" : "on"}`} title={reason ?? "Aktif"}>
           <i />
           {PROVIDER_LABEL[name] ?? name}
         </span>
+        )
       ))}
     </div>
   );
@@ -195,7 +228,12 @@ function TrackTable({ tracks }: { tracks: Track[] }) {
               </td>
               <td className="num muted">
                 {t.features.missing_features?.length ? (
-                  <span title={`Eksik: ${t.features.missing_features.join(", ")}`}>
+                  <span
+                    className={t.features.missing_features.some((f) => t.features.status?.[f] === "error") ? "miss-error" : ""}
+                    title={t.features.missing_features
+                      .map((f) => `${f}: ${STATUS_LABEL[t.features.status?.[f] ?? "missing"]}`)
+                      .join("\n")}
+                  >
                     {t.features.missing_features.length}/5
                   </span>
                 ) : (
@@ -248,42 +286,6 @@ function costColor(c: number) {
   // green → amber → red
   const hue = Math.round(130 - Math.min(1, c) * 130);
   return `hsl(${hue} 70% 50%)`;
-}
-
-function EnergyCurve({ original, ranked }: { original: Track[]; ranked: Track[] }) {
-  const W = 560;
-  const H = 120;
-  const known = original.map((t) => t.features.energy).filter((e): e is number => e != null);
-  const lo = known.length ? Math.max(0, Math.min(...known) - 0.05) : 0;
-  const hi = known.length ? Math.min(1, Math.max(...known) + 0.05) : 1;
-  const span = Math.max(0.1, hi - lo);
-  const pts = (list: Track[]) =>
-    list
-      .map((t, i) => {
-        const e = t.features.energy;
-        if (e == null) return null;
-        const x = list.length > 1 ? (i / (list.length - 1)) * (W - 20) + 10 : W / 2;
-        const y = H - 10 - ((e - lo) / span) * (H - 20);
-        return `${x.toFixed(1)},${y.toFixed(1)}`;
-      })
-      .filter(Boolean)
-      .join(" ");
-  return (
-    <div className="curve">
-      <div className="curve-legend">
-        <span>
-          <i className="lg lg-orig" /> Orijinal enerji
-        </span>
-        <span>
-          <i className="lg lg-mf" /> MoodFlow enerji
-        </span>
-      </div>
-      <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label="Enerji eğrisi">
-        <polyline points={pts(original)} className="line-orig" />
-        <polyline points={pts(ranked)} className="line-mf" />
-      </svg>
-    </div>
-  );
 }
 
 /* ------------------------------------------------------------------ mix panel */
@@ -451,6 +453,12 @@ export default function App() {
 
   const tracks = playlist?.tracks ?? [];
   const byId = useMemo(() => Object.fromEntries(tracks.map((t) => [t.occurrence_id, t])), [tracks]);
+  // values measured from the downloaded recordings during a mix: shown in the table only
+  // (plan v1.8 §6.4: local analysis is for the mix), ranking keeps using provider data
+  const displayTracks = useMemo(() => {
+    const updates = mixStatus?.feature_updates ?? {};
+    return tracks.map((t) => (updates[t.occurrence_id] ? { ...t, features: updates[t.occurrence_id] } : t));
+  }, [tracks, mixStatus]);
   const ranked = useMemo(
     () => (ranking ? ranking.ordered_ids.map((id) => byId[id]).filter(Boolean) : []),
     [ranking, byId],
@@ -590,11 +598,11 @@ export default function App() {
                 </ul>
               </details>
             )}
-            <TrackTable tracks={tracks} />
+            <TrackTable tracks={displayTracks} />
             <p className="muted small">
-              Öncelik: FreqBlog → ReccoBeats / GetSongBPM (BPM/Key) → Last.fm / MusicBrainz (Genre) → yerel analiz. Kaynağı görmek için
-              değerin üzerine gelin; <b>≈</b> yerel/türetilmiş değerdir (enerji bu durumda playlist içinde görecelidir).
-              Bulunamayan değerler boş (—) bırakılır.
+              Öncelik: FreqBlog → ReccoBeats / GetSongBPM (BPM/Key) → Last.fm / MusicBrainz (Genre). Eksik BPM ve enerji, miks
+              sırasında indirilen kayıttan yerel olarak ölçülür. Kaynak, durum ve güven için değerin üzerine gelin; <b>≈</b>{" "}
+              yerel/türetilmiş değerdir. Bulunamayan değerler boş (—) bırakılır.
             </p>
           </section>
 
@@ -647,7 +655,7 @@ export default function App() {
             {rankError && <div className="alert alert-error">{rankError}</div>}
             {ranking && (
               <>
-                <EnergyCurve original={tracks} ranked={ranked} />
+                <FlowChart original={tracks} ranked={ranked} breakdown={ranking.transition_breakdown} />
                 <div className="orders">
                   <OrderList title="Orijinal sıra" tracks={tracks} />
                   <OrderList title="MoodFlow sırası" tracks={ranked} costs={ranking.transition_costs} />
@@ -668,7 +676,14 @@ export default function App() {
         </>
       )}
 
-      <footer className="muted small">MoodFlow demo · React + FastAPI + yt-dlp + librosa + FFmpeg</footer>
+      <footer className="muted small">
+        MoodFlow demo · React + FastAPI + yt-dlp + librosa + FFmpeg
+        {health?.feature_providers.getsongbpm === null && (
+          <>
+            {" "}· BPM/Key verisi: <a href="https://getsongbpm.com" target="_blank" rel="noreferrer">GetSongBPM</a>
+          </>
+        )}
+      </footer>
     </div>
   );
 }

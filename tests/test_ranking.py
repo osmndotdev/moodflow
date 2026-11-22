@@ -87,3 +87,17 @@ def test_objective_score_range(sample_tracks):
     obj = Objective(sample_tracks, "daily", None)
     s = obj.score(list(range(len(sample_tracks))))
     assert 0 <= s <= 1
+
+
+def test_transition_breakdown_for_both_orders(sample_tracks):
+    res = rank(sample_tracks, "dj")
+    bd = res["transition_breakdown"]
+    n = len(sample_tracks)
+    assert len(bd["before"]) == len(bd["after"]) == n - 1
+    assert [s["total"] for s in bd["after"]] == res["transition_costs"]
+    for step in bd["before"] + bd["after"]:
+        assert set(step) == {"bpm", "key", "mood", "energy", "genre", "total"}
+        assert all(v is None or 0 <= v <= 1 for v in step.values())
+    # the fixture's 9th track has no metadata → its transitions aren't comparable, not zero
+    i = [t.occurrence_id for t in sample_tracks].index("item-009")
+    assert bd["before"][i - 1]["bpm"] is None and bd["before"][i]["key"] is None

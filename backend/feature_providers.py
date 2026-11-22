@@ -6,7 +6,8 @@ Priority (see ``features.py``):
   2. GetSongBPM ``/search`` + ``/song`` → missing bpm / key
   3. Last.fm ``track.getTopTags``    → missing genre
   4. MusicBrainz artist genres        → missing genre (keyless, 1 req/s)
-  5. Local preview analysis           → missing bpm, raw loudness for a playlist-relative energy
+Local librosa analysis of the *downloaded* recording (BPM, playlist-relative energy) happens
+only in the mix pipeline — see ``features.fill_from_downloaded_audio``.
 
 Every adapter returns ``None`` instead of raising for "not found"; an adapter that is
 mis-configured (no key / rejected key) reports ``enabled == False`` and is skipped.
@@ -16,11 +17,9 @@ from __future__ import annotations
 import logging
 import os
 import re
-import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import httpx
@@ -445,58 +444,3 @@ class MusicBrainzGenreProvider:
             self._artist_cache[key] = genres
         genres = self._artist_cache[key]
         return ProviderResult("musicbrainz", {"genre": genres}) if genres else None
-
-
-# --------------------------------------------------------------------------- local preview analysis
-
-class LocalPreviewAnalyzer:
-    """Last resort: analyse a 30 s public preview locally (Deezer search, keyless).
-
-    Yields BPM (librosa beat tracking) and *raw* loudness. Energy is derived from loudness
-    relative to the playlist by ``features.py``; key, mood and valence are never derived
-    locally (not reliable enough for the demo).
-    """
-
-    name = "local_preview"
-    DEEZER = "https://api.deezer.com"
-
-    def __init__(self, enabled: bool = True, client: httpx.Client | None = None):
-        self.client = client or httpx.Client(timeout=15, follow_redirects=True, headers={"User-Agent": USER_AGENT})
-        self.disabled_reason: str | None = None if enabled else "MOODFLOW_LOCAL_PREVIEW=0"
-
-    @property
-    def enabled(self) -> bool:
-        return self.disabled_reason is None
-
-    def lookup(self, title: str, artist: str, duration: float | None) -> ProviderResult | None:
-        if not self.enabled:
-            return None
-        clean_title = re.sub(r"\s*[\(\[].*?[\)\]]", "", title).strip() or title
-        primary = re.sub(r"\s*[\(\[].*?[\)\]]", "", re.split(r",|&", artist)[0]).strip()
-        res = self.client.get(f"{self.DEEZER}/search", params={"q": f"{primary} {clean_title}", "limit": 5})
-        res.raise_for_status()
-        best, best_score = None, 0.0
-        for c in res.json().get("data", []):
-            s = match_score(title, artist, duration, c.get("title", ""), (c.get("artist") or {}).get("name", ""),
-                            c.get("duration"))
-            if s > best_score:
-                best, best_score = c, s
-        if not best or best_score < 0.62 or not best.get("preview"):
-            return None
-        audio = self.client.get(best["preview"])
-        audio.raise_for_status()
-        with tempfile.NamedTemporaryFile(suffix=".mp3") as tmp:
-            tmp.write(audio.content)
-            tmp.flush()
-            return ProviderResult("local_preview", analyze_clip(Path(tmp.name)))
-
-
-def analyze_clip(path: Path) -> dict:
-    import librosa
-
-    y, sr = librosa.load(str(path), sr=22050, mono=True, duration=35)
-    if y.size < sr * 5 or float(np.max(np.abs(y))) < 1e-4:
-        raise ValueError("clip too short or silent")
-    tempo, _ = librosa.beat.beat_track(y=y, sr=sr)
-    rms_db = 20 * np.log10(np.maximum(librosa.feature.rms(y=y)[0], 1e-6))
-    return {"bpm": fold_bpm(float(np.atleast_1d(tempo)[0])), "loudness_db": round(float(np.mean(rms_db)), 2)}

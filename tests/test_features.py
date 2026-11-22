@@ -171,30 +171,55 @@ def test_fallbacks_only_fill_missing_fields():
     assert f.sources == {"bpm": "freqblog", "key": "freqblog", "energy": "freqblog", "genre": "lastfm",
                          "mood": "derived(freqblog valence+energy)"}
     assert f.missing_features == []
+    assert f.status == {"bpm": "ok", "key": "ok", "mood": "derived", "energy": "ok", "genre": "ok"}
 
 
 def test_nothing_is_invented_when_all_sources_fail():
     providers = [Fake("freqblog", None), Fake("getsongbpm", exc=httpx.ConnectError("down")),
-                 Fake("lastfm", None), Fake("local_preview", exc=RuntimeError("bad audio"))]
+                 Fake("lastfm", exc=RuntimeError("bad json"))]
     t = _track()
     warnings = FeatureService(providers).enrich([t])
     f = t.features
     assert (f.bpm, f.camelot, f.mood, f.energy, f.genre) == (None, None, None, None, None)
     assert f.missing_features == ["bpm", "key", "mood", "energy", "genre"]
+    # missing because a provider failed (retry later) vs. because nobody had it
+    assert f.status == {"bpm": "error", "key": "error", "mood": "missing", "energy": "missing", "genre": "error"}
     assert any("getsongbpm" in w for w in warnings)
 
 
-def test_local_preview_gives_relative_energy_but_no_mood_or_key():
-    loud = {"Quiet": -20.0, "Mid": -14.0, "Loud": -8.0}
-    lp = Fake("local_preview", lambda title: {"bpm": 100.0, "loudness_db": loud[title]})
-    tracks = [_track(title=k, artist="A", i=i) for i, k in enumerate(loud, 1)]
-    FeatureService([Fake("freqblog", None), lp]).enrich(tracks)
-    energies = [t.features.energy for t in tracks]
-    assert energies == sorted(energies) and energies[0] < energies[-1]
-    for t in tracks:
-        assert t.features.camelot is None and t.features.mood is None
-        assert t.features.sources["energy"].startswith("local_rms")
-        assert t.features.missing_features == ["key", "mood", "genre"]
+def test_transient_errors_are_not_cached(tmp_path):
+    flaky = Fake("lastfm", exc=httpx.ConnectError("down"))
+    svc = FeatureService([Fake("freqblog", {"bpm": 120.0}), flaky], cache_file=tmp_path / "f.json")
+    svc.enrich([_track()])
+    flaky.exc, flaky.fields = None, {"genre": ["pop"]}
+    t = _track()
+    svc.enrich([t])
+    assert flaky.calls == 2 and t.features.genre == ["pop"] and t.features.status["genre"] == "ok"
+
+
+def test_error_cleared_when_a_later_provider_fills_the_field():
+    t = _track()
+    FeatureService([Fake("lastfm", exc=httpx.ConnectError("down")), Fake("musicbrainz", {"genre": ["rock"]})]).enrich([t])
+    assert t.features.status["genre"] == "ok"
+
+
+def test_downloaded_audio_fills_only_missing_bpm_and_relative_energy():
+    from backend.features import compute_status, fill_from_downloaded_audio
+    from backend.schemas import Features
+
+    known = _track(title="Known", i=1)
+    known.features = Features(bpm=128.0, energy=0.9, camelot="8A", sources={"bpm": "freqblog", "energy": "freqblog", "key": "freqblog"})
+    quiet, loud = _track(title="Quiet", i=2), _track(title="Loud", i=3)
+    for t in (known, quiet, loud):
+        compute_status(t.features)
+    updates = fill_from_downloaded_audio([(known, 64.0, -9.0), (quiet, 61.0, -20.0), (loud, 175.0, -8.0)])
+    assert "item-001" not in updates  # provider values are never overridden
+    q, l = updates["item-002"], updates["item-003"]
+    assert (q.bpm, l.bpm) == (122.0, 175.0)  # folded into 70..180
+    assert q.energy < l.energy
+    assert q.sources["energy"].startswith("local_rms") and q.status["energy"] == "local"
+    assert q.status["key"] == "missing" and q.mood is None  # no local key / mood
+    assert quiet.features.bpm is None  # input tracks untouched
 
 
 def test_disabled_providers_reported_and_cached_results_reused(tmp_path):

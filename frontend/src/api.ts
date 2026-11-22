@@ -15,6 +15,7 @@ export interface Features {
   energy: number | null;
   genre: string[] | null;
   sources: Partial<Record<FeatureName, string>>;
+  status: Partial<Record<FeatureName, "ok" | "derived" | "local" | "missing" | "error">>;
   missing_features: FeatureName[];
 }
 
@@ -54,12 +55,22 @@ export interface Weights {
   genre: number;
 }
 
+export interface TransitionStep {
+  bpm: number | null;
+  key: number | null;
+  mood: number | null;
+  energy: number | null;
+  genre: number | null;
+  total: number;
+}
+
 export interface RankResponse {
   ordered_ids: string[];
   score_before: number;
   score_after: number;
   kept_original: boolean;
   transition_costs: number[];
+  transition_breakdown: { before: TransitionStep[]; after: TransitionStep[] };
 }
 
 export type TrackStage =
@@ -90,6 +101,7 @@ export interface MixStatus {
   error: string | null;
   tracks: MixTrackProgress[];
   plan: MixPlan | null;
+  feature_updates: Record<string, Features>;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {

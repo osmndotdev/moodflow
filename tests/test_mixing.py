@@ -116,6 +116,10 @@ def test_job_replaces_failed_downloads(monkeypatch, tmp_path, six_sources):
     assert [s["id"] for s in job.plan["segments"]] == ["item-001", "item-003", "item-005", "item-006", "item-007", "item-008"]
     assert any("item" not in w and "atlandı" in w for w in job.warnings)
     assert (tmp_path / "mixes" / job.mix_id / "preview.mp3").is_file()
+    # tracks had no provider features → BPM / energy measured from the downloaded audio
+    upd = job.feature_updates["item-001"]
+    assert upd.bpm and upd.energy is not None and upd.status["bpm"] == "local"
+    assert set(job.feature_updates) == {"item-001", "item-003", "item-005", "item-006", "item-007", "item-008"}
 
 
 def test_job_fails_cleanly_with_fewer_than_two_sources(monkeypatch, tmp_path, six_sources):

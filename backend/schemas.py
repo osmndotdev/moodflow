@@ -22,6 +22,7 @@ class Features(BaseModel):
     energy: float | None = None
     genre: list[str] | None = None
     sources: dict[str, str] = Field(default_factory=dict)  # feature → provider
+    status: dict[str, str] = Field(default_factory=dict)  # feature → ok|derived|local|missing|error
     missing_features: list[str] = Field(default_factory=list)
 
 
@@ -70,6 +71,8 @@ class RankResponse(BaseModel):
     score_after: float
     kept_original: bool = False
     transition_costs: list[float] = []
+    # per-step feature distances (0..1, null = not comparable) for the original and new order
+    transition_breakdown: dict[str, list[dict[str, float | None]]] = {}
 
 
 class MixRequest(BaseModel):
@@ -108,3 +111,5 @@ class MixStatus(BaseModel):
     error: str | None = None
     tracks: list[MixTrackProgress] = []
     plan: dict | None = None
+    # features filled locally from the downloaded recordings (BPM / energy no provider had)
+    feature_updates: dict[str, Features] = {}

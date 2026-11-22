@@ -32,6 +32,13 @@ class TrackAnalysis:
     def frame_sec(self) -> float:
         return HOP / ANALYSIS_SR
 
+    @property
+    def loudness_db(self) -> float:
+        """Mean frame loudness of the non-silent part (for playlist-relative energy)."""
+        db = 20 * np.log10(np.maximum(self.rms, 1e-6))
+        voiced = db[db > db.max() - 40]
+        return float(np.mean(voiced if voiced.size else db))
+
 
 class AnalysisError(Exception):
     pass

@@ -226,12 +226,25 @@ def _start_indices(obj: Objective, tracks: list[Track], k: int = 5) -> list[int]
     return seen[:k]
 
 
+def transition_breakdown(order: list[Track], weights: dict[str, float]) -> list[dict]:
+    """Per-step distances for charting: each feature's d_f (0..1, None if not comparable) + weighted total."""
+    out = []
+    for a, b in zip(order, order[1:]):
+        step = {f: (None if (d := DISTANCES[f](a.features, b.features)) is None else round(d, 3)) for f in FEATURES}
+        step["total"] = round(transition_cost(a.features, b.features, weights), 3)
+        out.append(step)
+    return out
+
+
 def rank(tracks: list[Track], mode: Mode = "daily", weights: Weights | None = None) -> dict:
     n = len(tracks)
     ids = [t.occurrence_id for t in tracks]
     if n < 3:
-        return {"ordered_ids": ids, "score_before": 0.0, "score_after": 0.0,
-                "kept_original": True, "transition_costs": []}
+        w = resolve_weights(mode, weights)
+        steps = transition_breakdown(tracks, w)
+        return {"ordered_ids": ids, "score_before": 0.0, "score_after": 0.0, "kept_original": True,
+                "transition_costs": [s["total"] for s in steps],
+                "transition_breakdown": {"before": steps, "after": steps}}
     obj = Objective(tracks, mode, weights)
     original = list(range(n))
     before = obj.score(original)
@@ -248,4 +261,8 @@ def rank(tracks: list[Track], mode: Mode = "daily", weights: Weights | None = No
         "score_after": round(best_score, 4),
         "kept_original": kept,
         "transition_costs": [round(obj.cost[a][b], 3) for a, b in zip(best, best[1:])],
+        "transition_breakdown": {
+            "before": transition_breakdown(tracks, resolve_weights(mode, weights)),
+            "after": transition_breakdown([tracks[i] for i in best], resolve_weights(mode, weights)),
+        },
     }

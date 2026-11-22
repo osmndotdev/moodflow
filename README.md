@@ -15,11 +15,12 @@ No login, no OAuth, nothing is written back to YouTube/Spotify, no uploads.
 - Internet access (YouTube, Spotify embed page, feature APIs)
 - **API keys (server-side, developer-owned; no end-user auth):** copy `.env.example` → `.env` and fill in
   - `FREQBLOG_API_KEY` — primary source for all five features. Free key (1,000 lookups/month, no card): https://freqblog.com/#pricing
-  - `GETSONGBPM_API_KEY` (missing BPM/key) and `LASTFM_API_KEY` (missing genre) — optional fallbacks, skipped when empty
+  - `GETSONGBPM_API_KEY` (missing BPM/key) and `LASTFM_API_KEY` (missing genre) — optional fallbacks, skipped when empty.
+    When GetSongBPM is active, the page shows the backlink to getsongbpm.com that its free tier requires.
 
-  Without keys the app still runs: BPM and key come from ReccoBeats (keyless) where it knows the track, a
-  playlist-relative energy from local analysis, and genre from MusicBrainz where it answers in time. Mood stays
-  empty, since v1.8 forbids inventing it.
+  Without keys the app still runs: BPM and key come from ReccoBeats (keyless) where it knows the track and
+  genre from MusicBrainz where it answers in time. Energy and mood stay empty before the mix, since v1.8
+  forbids inventing them; missing BPM/energy is measured from the downloaded audio once a mix runs.
 
 ## Run
 
@@ -56,7 +57,7 @@ Tests (offline, ~5 s; downloads and network are faked, audio is synthesized):
 | Step | Module | Notes |
 |---|---|---|
 | Import | `backend/importers.py` | YouTube: `yt_dlp.YoutubeDL(extract_flat=in_playlist)`, first 20 items. Spotify: `SpotifyPublicAdapter` reads the public **embed page** JSON (no API key / OAuth). Private / missing lists → clear error. |
-| Features | `backend/features.py` + `backend/feature_providers.py` | Per-field priority, fallbacks only for fields still missing: **BPM** FreqBlog → ReccoBeats → GetSongBPM → local preview beat tracking · **Key** FreqBlog → ReccoBeats → GetSongBPM (Open Key → Camelot) · **Mood** FreqBlog, or coarse mood derived from FreqBlog valence+energy · **Energy** FreqBlog → local loudness scaled within the playlist · **Genre** FreqBlog → Last.fm tags (non-genre tags filtered) → MusicBrainz artist tags (1 req/s, 15 s budget per import). ReccoBeats (keyless, not in plan v1.8) answers Spotify items in one batch by Spotify ID and other items via title search. Every hit is checked against artist/title/version, plus ±20 s duration for Spotify items (YouTube lengths are video lengths, so they aren't compared); FreqBlog 202 is retried, 429 honours `Retry-After`. Each track carries `sources` (feature → provider) and `missing_features`; the UI shows the source on hover and marks local/derived values with ≈. Cached by artist+title+version in `tmp/cache/features.json`. `GET /api/health` reports which providers are active. |
+| Features | `backend/features.py` + `backend/feature_providers.py` | Per-field priority, fallbacks only for fields still missing: **BPM** FreqBlog → ReccoBeats → GetSongBPM → (mix only) beat tracking on the downloaded recording · **Key** FreqBlog → ReccoBeats → GetSongBPM (Open Key → Camelot) · **Mood** FreqBlog, or coarse mood derived from FreqBlog valence+energy · **Energy** FreqBlog → (mix only) downloaded-audio loudness scaled among the mix tracks · **Genre** FreqBlog → Last.fm tags (non-genre tags filtered) → MusicBrainz artist tags (1 req/s, 15 s budget per import). ReccoBeats (keyless, not in plan v1.8) answers Spotify items in one batch by Spotify ID and other items via title search. Every hit is checked against artist/title/version, plus ±20 s duration for Spotify items (YouTube lengths are video lengths, so they aren't compared); FreqBlog 202 is retried, 429 honours `Retry-After`. Each feature has a `sources` entry, a `status` (`ok` / `derived` / `local` / `missing` / `error` — error means a provider failed and the field is retried on the next import, since failed lookups aren't cached) and, where the provider gives one, a confidence (`bpm_confidence` on FreqBlog's own scale, `key_confidence` 0–1, kept apart). `missing_features` lists the gaps. The UI shows source, status and confidence on hover and marks local/derived values with ≈. Values measured during a mix come back as `feature_updates` in `GET /api/mix/{id}` and are shown in the table only; ranking keeps using provider data (§6.4: local analysis is for the mix). Cached by artist+title+version in `tmp/cache/features.json`. `GET /api/health` reports which providers are active. |
 | Ranking | `backend/ranking.py` | `C(i,j) = Σ w_f·d_f(i,j)`, missing features re-normalise weights. 5 greedy starts + swap/relocate local search; if nothing beats the original order, the original is kept. Emotional mode adds a calm → peak → calm target curve (intensity is min-max scaled within the playlist). |
 | Audio | `backend/audio_sources.py` | yt-dlp Python API only. YouTube items use their `video_id`; Spotify items search `ytsearch3:<artist> - <track> audio`, score title/artist/duration/version tags (`live`, `cover`, `remix`, `slowed`…) and **never download a weak match**. WAV 44.1 kHz stereo, cached per video id, per-id lock, duration/filesize limits. |
 | Arrangement | `backend/arrangement.py` | librosa RMS + beat tracking on the downloaded recording (if its BPM disagrees with the metadata, the measured value is used and a warning is shown); chooses the strongest ~15–20 s window (skips silence/intros, snaps to beats). BPM within 6 % and steady beats → 3–6 s **beat crossfade** (8/16/4 beats); otherwise 2 s **safe fade**. Per-segment gain toward a common RMS. |
@@ -68,11 +69,11 @@ Temporary files live in `tmp/` (mixes expire after 1 h, cached WAVs after 6 h; s
 
 ## Known limits (demo scope)
 
-- Without `FREQBLOG_API_KEY` there is no mood data, and key comes only from ReccoBeats, which misses many
-  new releases (8/20 on a current Top Hits playlist) and sometimes reports the relative minor/major.
-- Local energy (keyless fallback) is relative to the playlist and isn't on FreqBlog's scale; mixing both
-  sources in one playlist is approximate.
-- The local fallback finds its 30 s preview through Deezer's public search. That's the only Deezer use.
+- Without `FREQBLOG_API_KEY` there is no mood or energy data before the mix, and key comes only from
+  ReccoBeats, which misses many new releases (8/20 on a current Top Hits playlist) and sometimes reports the
+  relative minor/major.
+- Locally measured energy is relative to the mix's tracks and isn't on FreqBlog's scale.
+- ReccoBeats is an addition the v1.8 plan doesn't list; turn it off with `MOODFLOW_RECCOBEATS=0`.
 - Spotify embed-page reading is unofficial and may break if Spotify changes the page; the app then shows
   an error instead of asking for OAuth. The YouTube flow works on its own.
 - MusicBrainz often answers 503 (rate limit); genres it didn't return in time are retried on the next import.

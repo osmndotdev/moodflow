@@ -19,7 +19,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import arrangement, audio_sources, mixing
-from .features import FeatureService, build_feature_service
+from .features import FeatureService, build_feature_service, fill_from_downloaded_audio
 from .importers import PlaylistImportError, import_playlist
 from .ranking import rank
 from .schemas import (
@@ -193,7 +193,8 @@ def run_mix_job(mix_id: str, ordered: list[Track]) -> None:
         if len(chosen) < MAX_MIX_TRACKS:
             warnings.append(f"Yalnızca {len(chosen)} parça edinilebildi; miks daha kısa olacak.")
 
-        _update(mix_id, stage="arranging", warnings=warnings)
+        updates = fill_from_downloaded_audio([(t, a.bpm, a.loudness_db) for t, _, a in chosen])
+        _update(mix_id, stage="arranging", warnings=warnings, feature_updates=updates)
         plan = arrangement.build_plan([(t.occurrence_id, a) for t, _, a in chosen])
 
         _update(mix_id, stage="rendering", plan=plan)

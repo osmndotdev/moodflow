@@ -1,13 +1,15 @@
 """Five features (BPM, Key/Camelot, Mood, Energy, Genre): provider priority + fallback.
 
 Order per field (plan v1.8 §6.1):
-  BPM     FreqBlog → ReccoBeats → GetSongBPM → local preview beat tracking
+  BPM     FreqBlog → ReccoBeats → GetSongBPM → (mix only) beat tracking on the downloaded audio
   Key     FreqBlog → ReccoBeats → GetSongBPM         (no unverified local key estimate)
   Mood    FreqBlog → coarse mood derived from FreqBlog valence+energy, else null
-  Energy  FreqBlog → local loudness, min-max normalised within the playlist
+  Energy  FreqBlog → (mix only) downloaded-audio loudness, min-max scaled among the mix tracks
   Genre   FreqBlog → Last.fm tags → MusicBrainz artist genres
 Fallbacks are only called for fields that are still missing. Nothing is invented: a field
-no source could fill stays null and is listed in ``missing_features``.
+no source could fill stays null and is listed in ``missing_features``. Each feature also
+carries ``sources[f]`` and ``status[f]``; confidences are kept only where the provider gives
+them (``bpm_confidence`` on FreqBlog's own scale, ``key_confidence`` 0..1 — never merged).
 """
 from __future__ import annotations
 
@@ -158,13 +160,69 @@ PROVIDES = {
     "getsongbpm": {"bpm", "key", "camelot"},
     "lastfm": {"genre"},
     "musicbrainz": {"genre"},
-    "local_preview": {"bpm", "loudness_db"},
 }
 # field group → the Features attribute that decides whether it's still missing
 GROUP_OF = {"bpm": "bpm", "bpm_alt": "bpm", "bpm_confidence": "bpm", "key": "camelot", "camelot": "camelot",
             "key_confidence": "camelot", "mood": "mood", "valence": "mood", "energy": "energy",
-            "genre": "genre", "loudness_db": "energy"}
+            "genre": "genre"}
 SOURCE_KEY = {"bpm": "bpm", "camelot": "key", "mood": "mood", "energy": "energy", "genre": "genre"}
+FEATURE_OF_GROUP = SOURCE_KEY  # field group → one of the FIVE feature names
+
+# Per-feature status (plan v1.8 §6.5.4):
+#   ok        value from an external provider
+#   derived   computed from other provider values (coarse mood from FreqBlog valence + energy)
+#   local     measured locally from the downloaded recording (mix pipeline only)
+#   missing   no source had it
+#   error     still missing because a provider that could fill it failed (retried next import)
+
+
+def feature_value(f: Features, name: str):
+    return {"bpm": f.bpm, "key": f.camelot, "mood": f.mood, "energy": f.energy, "genre": f.genre}[name]
+
+
+def compute_status(f: Features, errored: set[str] | None = None) -> None:
+    """Fill ``f.status`` and ``f.missing_features`` from values + sources."""
+    errored = errored or set()
+    f.status = {}
+    for name in FIVE:
+        src = f.sources.get(name, "")
+        if feature_value(f, name) in (None, []):
+            f.status[name] = "error" if name in errored else "missing"
+        elif src.startswith("derived"):
+            f.status[name] = "derived"
+        elif src.startswith("local"):
+            f.status[name] = "local"
+        else:
+            f.status[name] = "ok"
+    f.missing_features = [n for n in FIVE if f.status[n] in ("missing", "error")]
+
+
+def fill_from_downloaded_audio(items: list[tuple[Track, float | None, float | None]]) -> dict[str, Features]:
+    """Local fallback on the *downloaded* recordings (plan v1.8 §6.1 / §6.4).
+
+    items: (track, measured_bpm, mean_loudness_db) for every downloaded track of a mix.
+    Only fills BPM / energy that no provider supplied. Energy is the track's loudness
+    min-max scaled among the downloaded tracks — playlist-relative, not on FreqBlog's scale.
+    Returns occurrence_id → updated Features for the tracks that changed.
+    """
+    loud = [db for _, _, db in items if db is not None]
+    lo, hi = (min(loud), max(loud)) if loud else (0.0, 0.0)
+    span = max(hi - lo, 3.0)  # < 3 dB spread → don't exaggerate tiny differences
+    updates: dict[str, Features] = {}
+    for track, bpm, db in items:
+        f = track.features.model_copy(deep=True)
+        changed = False
+        if f.bpm is None and bpm:
+            f.bpm, f.sources["bpm"] = fold_bpm(bpm), "local_audio(downloaded)"
+            changed = True
+        if f.energy is None and db is not None and len(loud) >= 2:
+            f.energy = round(0.15 + 0.7 * (db - lo) / span, 2)
+            f.sources["energy"] = "local_rms(downloaded, playlist-relative)"
+            changed = True
+        if changed:
+            compute_status(f)
+            updates[track.occurrence_id] = f
+    return updates
 
 
 class FeatureService:
@@ -193,16 +251,11 @@ class FeatureService:
                 p.begin_batch(uncached)  # e.g. one batch request instead of one per track
         with ThreadPoolExecutor(self.workers) as pool:
             results = list(pool.map(self._collect, tracks))
-        loudness: dict[int, float] = {}
-        for i, (track, (data, sources, problems)) in enumerate(zip(tracks, results)):
-            if "energy" not in data and data.get("loudness_db") is not None:
-                loudness[i] = data["loudness_db"]
+        for track, (data, sources, problems, errored) in zip(tracks, results):
             track.features = self._to_features(data, sources)
+            compute_status(track.features, errored)
             for p in problems:
                 warnings.append(f"{track.artist} – {track.title}: {p}")
-        self._apply_relative_energy(tracks, loudness)
-        for t in tracks:
-            t.features.missing_features = [f for f in FIVE if self._missing(t.features, f)]
         disabled = [f"{p.name}: {p.disabled_reason}" for p in self.providers if p.disabled_reason]
         if disabled:
             warnings.insert(0, "Atlanan kaynaklar → " + "; ".join(disabled))
@@ -215,18 +268,19 @@ class FeatureService:
         versions = ",".join(sorted(version_tags(track.title)))
         return f"{normalize_text(track.artist)}|{normalize_text(track.title)}|{versions}"
 
-    def _collect(self, track: Track) -> tuple[dict, dict, list[str]]:
+    def _collect(self, track: Track) -> tuple[dict, dict, list[str], set[str]]:
         key = self.cache_key(track)
         with self._lock:
             cached = self._cache.get(key)
         if cached is not None:
-            return dict(cached["data"]), dict(cached["sources"]), []
+            return dict(cached["data"]), dict(cached["sources"]), [], set()
 
         from .feature_providers import ProviderAuthError
 
         data: dict[str, Any] = {}
         sources: dict[str, str] = {}
         problems: list[str] = []
+        errored: set[str] = set()  # FIVE-feature names a failing provider could have filled
         filled: set[str] = set()  # field groups already provided by a higher-priority source
         for p in self.providers:
             if not p.enabled:
@@ -241,13 +295,12 @@ class FeatureService:
                     res = p.lookup(track.title, track.artist, match_duration(track))
             except ProviderAuthError as err:
                 problems.append(str(err))
+                errored |= {FEATURE_OF_GROUP[g] for g in wanted}
                 continue
-            except (httpx.HTTPError, ValueError, KeyError, RuntimeError) as err:
+            except Exception as err:  # noqa: BLE001 — network/parse failure: skip this provider
                 log.warning("%s failed for %s - %s: %s", p.name, track.artist, track.title, err)
                 problems.append(f"{p.name} yanıt vermedi")
-                continue
-            except Exception as err:  # noqa: BLE001 — e.g. undecodable preview audio
-                log.warning("%s crashed for %s - %s: %s", p.name, track.artist, track.title, err)
+                errored |= {FEATURE_OF_GROUP[g] for g in wanted}
                 continue
             if res is None:
                 continue
@@ -266,31 +319,18 @@ class FeatureService:
         if "mood" not in data and data.get("valence") is not None and sources.get("energy") == "freqblog":
             data["mood"] = mood_labels(data["valence"], data["energy"])
             sources["mood"] = "derived(freqblog valence+energy)"
+        errored -= {FEATURE_OF_GROUP[g] for g in filled}  # a later provider filled it after all
         cut_short = "genre" not in data and any(getattr(p, "exhausted", False) for p in self.providers if p.enabled)
-        if not cut_short:  # a lookup skipped for time budget should be retried on the next import
+        # time-budget skips and transient errors should be retried on the next import, not cached
+        if not cut_short and not errored:
             with self._lock:
                 self._cache[key] = {"data": data, "sources": sources}
-        return data, sources, problems
+        return data, sources, problems, errored
 
     @staticmethod
     def _to_features(data: dict, sources: dict) -> Features:
-        allowed = set(Features.model_fields) - {"sources", "missing_features"}
+        allowed = set(Features.model_fields) - {"sources", "missing_features", "status"}
         return Features(**{k: v for k, v in data.items() if k in allowed}, sources=sources)
-
-    @staticmethod
-    def _apply_relative_energy(tracks: list[Track], loudness: dict[int, float]) -> None:
-        """Local energy = loudness min-max scaled within this playlist (not comparable to FreqBlog's scale)."""
-        if len(loudness) < 2:
-            return
-        lo, hi = min(loudness.values()), max(loudness.values())
-        span = max(hi - lo, 3.0)  # < 3 dB spread → don't exaggerate tiny differences
-        for i, db in loudness.items():
-            tracks[i].features.energy = round(0.15 + 0.7 * (db - lo) / span, 2)
-            tracks[i].features.sources["energy"] = "local_rms(playlist-relative)"
-
-    @staticmethod
-    def _missing(f: Features, name: str) -> bool:
-        return {"bpm": f.bpm, "key": f.camelot, "mood": f.mood, "energy": f.energy, "genre": f.genre}[name] in (None, [])
 
     def _save_cache(self) -> None:
         if not self.cache_file:
@@ -306,8 +346,7 @@ class FeatureService:
 def build_feature_service(cache_file: Path | None = None) -> FeatureService:
     """Providers from environment variables (server-side developer keys)."""
     from .feature_providers import (
-        FreqBlogProvider, GetSongBPMProvider, LastFmProvider, LocalPreviewAnalyzer, MusicBrainzGenreProvider,
-        ReccoBeatsProvider,
+        FreqBlogProvider, GetSongBPMProvider, LastFmProvider, MusicBrainzGenreProvider, ReccoBeatsProvider,
     )
 
     flag = lambda name, default="1": os.getenv(name, default).strip().lower() not in ("0", "false", "no", "")  # noqa: E731
@@ -316,9 +355,6 @@ def build_feature_service(cache_file: Path | None = None) -> FeatureService:
         ReccoBeatsProvider(enabled=flag("MOODFLOW_RECCOBEATS")),
         GetSongBPMProvider(os.getenv("GETSONGBPM_API_KEY")),
         LastFmProvider(os.getenv("LASTFM_API_KEY")),
-        # local preview before MusicBrainz: no overlapping fields, and it keeps workers busy while
-        # MusicBrainz calls wait on their 1 req/s lock
-        LocalPreviewAnalyzer(enabled=flag("MOODFLOW_LOCAL_PREVIEW")),
         MusicBrainzGenreProvider(enabled=flag("MOODFLOW_MUSICBRAINZ"),
                                  budget_sec=float(os.getenv("MOODFLOW_MUSICBRAINZ_BUDGET", 15))),
     ], cache_file=cache_file, workers=6)

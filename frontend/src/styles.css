@@ -410,60 +410,175 @@ table.tracks {
   font-size: 12.5px;
 }
 
-/* curve */
-.curve {
+/* flow chart (original vs MoodFlow). Series colours validated for CVD separation on --bg-2 */
+.flow {
+  --series-orig: #3987e5;
+  --series-mf: #d55181;
   margin-top: 16px;
   background: var(--bg-2);
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 10px 12px 4px;
+  padding: 12px 14px 10px;
 }
-.curve svg {
-  width: 100%;
-  height: 110px;
-  display: block;
-}
-.curve-legend,
-.legend-row {
+.flow-controls {
   display: flex;
-  gap: 16px;
-  font-size: 12.5px;
-  color: var(--muted);
+  flex-wrap: wrap;
+  gap: 6px;
   align-items: center;
 }
-.lg {
+.flow-group-label {
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  margin: 0 2px 0 6px;
+}
+.flow-group-label:first-child {
+  margin-left: 0;
+}
+.chip-btn {
+  font: inherit;
+  font-size: 12.5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.chip-btn:hover {
+  color: var(--text);
+}
+.chip-btn.on {
+  color: var(--text);
+  border-color: var(--accent);
+  background: color-mix(in oklab, var(--accent) 16%, transparent);
+}
+.flow-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: 10px 0 4px;
+  font-size: 12.5px;
+}
+.flow-hint {
+  color: var(--muted);
+}
+.flow-legend {
+  display: flex;
+  gap: 14px;
+  color: var(--text);
+}
+.key {
   display: inline-block;
   width: 14px;
-  height: 4px;
-  border-radius: 2px;
+  height: 2px;
+  border-radius: 1px;
   vertical-align: middle;
   margin-right: 4px;
 }
-.lg-orig {
-  background: #6b6485;
+.key.s-orig {
+  background: var(--series-orig);
 }
-.lg-mf {
-  background: var(--accent-2);
+.key.s-mf {
+  background: var(--series-mf);
 }
-.lg-beat {
-  background: var(--good);
+.flow-plot {
+  position: relative;
 }
-.lg-safe {
-  background: var(--warn);
+.flow-plot svg {
+  display: block;
+  overflow: visible;
 }
-.line-orig,
-.line-mf {
+.flow-plot .grid {
+  stroke: var(--line);
+  stroke-width: 1;
+}
+.flow-plot .tick {
+  fill: var(--muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.flow-plot .direct {
+  fill: var(--text);
+  font-size: 11.5px;
+}
+.flow-plot .line {
   fill: none;
-  stroke-width: 2.5;
-  vector-effect: non-scaling-stroke;
+  stroke-width: 2;
   stroke-linejoin: round;
+  stroke-linecap: round;
 }
-.line-orig {
-  stroke: #6b6485;
-  stroke-dasharray: 4 4;
+.flow-plot .dot {
+  stroke: var(--bg-2);
+  stroke-width: 2;
 }
-.line-mf {
-  stroke: var(--accent-2);
+.flow-plot .s-orig .line {
+  stroke: var(--series-orig);
+}
+.flow-plot .s-orig .dot {
+  fill: var(--series-orig);
+}
+.flow-plot .s-mf .line {
+  stroke: var(--series-mf);
+}
+.flow-plot .s-mf .dot {
+  fill: var(--series-mf);
+}
+.flow-plot .crosshair {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+.flow-plot .hit {
+  fill: transparent;
+  cursor: crosshair;
+  outline: none;
+}
+.flow-plot .hit:focus-visible {
+  stroke: var(--accent);
+  stroke-width: 1;
+}
+.flow-tip {
+  position: absolute;
+  pointer-events: none;
+  width: 280px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 9px;
+  font-size: 12px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+}
+.tip-x {
+  color: var(--muted);
+  margin-bottom: 3px;
+}
+.tip-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 2px;
+}
+.tip-row .key {
+  flex: none;
+  transform: translateY(-3px);
+}
+.tip-row b {
+  min-width: 34px;
+  font-variant-numeric: tabular-nums;
+}
+.tip-name {
+  color: var(--muted);
+  line-height: 1.35;
+}
+.flow-table {
+  margin-top: 6px;
+  font-size: 13px;
+}
+.flow-table summary {
+  cursor: pointer;
+  color: var(--muted);
 }
 
 /* orders */
@@ -754,4 +869,12 @@ footer {
 }
 .prov.off i {
   background: #554e6e;
+}
+
+.miss-error {
+  color: var(--bad);
+}
+a.prov {
+  color: inherit;
+  text-decoration: none;
 }
