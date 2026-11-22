@@ -13,7 +13,8 @@ def six_sources(tmp_path_factory):
     from tests.conftest import make_beat_wav
     d = tmp_path_factory.mktemp("src")
     specs = [(120, 220, 0.3), (121, 247, 0.9), (122, 262, 0.5), (90, 196, 1.0), (91, 294, 0.2), (124, 330, 0.7)]
-    return {f"item-{i:03d}": make_beat_wav(d / f"s{i}.wav", bpm=b, freq=f, amplitude=a, intro_silence=12)
+    return {f"item-{i:03d}": make_beat_wav(d / f"s{i}.wav", bpm=b, freq=f, amplitude=a, intro_silence=12,
+                                           seconds=90)
             for i, (b, f, a) in enumerate(specs, 1)}
 
 
@@ -38,14 +39,14 @@ def test_segment_skips_silent_intro(analyses):
 def test_transition_types(analyses):
     a120, a121, a90 = analyses[0][1], analyses[1][1], analyses[3][1]
     kind, d = arrangement.plan_transition(a120, a121)
-    assert kind == "beat_crossfade" and 3 <= d <= 6
+    assert kind == "beat_crossfade" and arrangement.XFADE_MIN_SEC <= d <= arrangement.XFADE_MAX_SEC
     kind, d = arrangement.plan_transition(a121, a90)
-    assert kind == "safe_fade" and 1 <= d <= 3
+    assert kind == "safe_fade" and d == arrangement.SAFE_FADE_SEC
 
 
 def test_plan_and_render_six_tracks(tmp_path, analyses, six_sources):
     plan = arrangement.build_plan(analyses)
-    assert 60 <= plan["total_duration_sec"] <= 100
+    assert 150 <= plan["total_duration_sec"] <= 190  # ~3 min mix
     assert len(plan["segments"]) == 6 and len(plan["transitions"]) == 5
     out = mixing.render_mix(plan, six_sources, tmp_path / "preview.mp3")
     assert mixing.probe_duration(out) == pytest.approx(plan["total_duration_sec"], abs=1.0)

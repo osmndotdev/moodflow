@@ -14,10 +14,14 @@ import numpy as np
 
 ANALYSIS_SR = 22050
 HOP = 512
-TARGET_TOTAL_SEC = 85.0
-MIN_SEG, MAX_SEG = 15.0, 30.0
+TARGET_TOTAL_SEC = 170.0          # ~3 min: room for long, phrase-length transitions
+MIN_SEG, MAX_SEG = 25.0, 45.0
 TARGET_RMS_DB = -16.0
-SAFE_FADE_SEC = 2.0
+SAFE_FADE_SEC = 4.0
+# beat crossfades: a musical phrase of the outgoing song (16 beats), 32 for fast and 8 for slow
+# tempos, aiming at XFADE_MIN..XFADE_MAX seconds
+XFADE_BEATS = (16, 32, 8)
+XFADE_MIN_SEC, XFADE_MAX_SEC = 7.0, 12.0
 
 
 @dataclass
@@ -87,10 +91,10 @@ def bpm_close(a: float | None, b: float | None, tol: float = 0.06) -> bool:
 def plan_transition(a: TrackAnalysis, b: TrackAnalysis) -> tuple[str, float]:
     if bpm_close(a.bpm, b.bpm) and min(a.beat_confidence, b.beat_confidence) >= 0.6:
         beat = 60.0 / ((a.bpm + b.bpm) / 2)
-        for n_beats in (8, 16, 4):  # a phrase-ish length that lands in 3..6 s
-            if 3.0 <= n_beats * beat <= 6.0:
+        for n_beats in XFADE_BEATS:
+            if XFADE_MIN_SEC <= n_beats * beat <= XFADE_MAX_SEC:
                 return "beat_crossfade", round(n_beats * beat, 3)
-        return "beat_crossfade", 4.0
+        return "beat_crossfade", round(16 * beat, 3)
     return "safe_fade", SAFE_FADE_SEC
 
 
@@ -169,7 +173,15 @@ def local_period(beats: np.ndarray, t: float, n: int = 16) -> float | None:
         return None
     i = int(np.argmin(np.abs(beats - t)))
     lo, hi = max(0, i - n // 2), min(len(beats), i + n // 2 + 1)
-    seg = beats[lo:hi]
+    return fit_period(beats[lo:hi])
+
+
+def period_between(beats: np.ndarray, t0: float, t1: float) -> float | None:
+    """Beat period fitted over the beats inside [t0, t1] (e.g. exactly the overlap)."""
+    return fit_period(beats[(beats >= t0 - 1e-6) & (beats <= t1 + 1e-6)])
+
+
+def fit_period(seg: np.ndarray) -> float | None:
     if len(seg) < 4:
         return None
     ibi = np.diff(seg)
@@ -211,7 +223,7 @@ def _onset_slice(a: TrackAnalysis, start: float, dur: float) -> tuple[np.ndarray
 
 
 def fine_lag(a: TrackAnalysis, a_start: float, f_a: float, b: TrackAnalysis, b_start: float, f_b: float,
-             overlap_out: float, max_lag_out: float) -> float:
+             overlap_out: float, max_lag_out: float, center: float = 0.0) -> float:
     """Output-time lag L (s) of B's onsets relative to A's over the overlap; B is late when L > 0.
 
     Both sides are compared in *output* time (after their tempo stretch), at ~6 ms resolution.
@@ -220,17 +232,17 @@ def fine_lag(a: TrackAnalysis, a_start: float, f_a: float, b: TrackAnalysis, b_s
         return 0.0
     try:
         env_a, step = _onset_slice(a, a_start, overlap_out * f_a)
-        margin = max_lag_out * f_b
+        margin = (max_lag_out + abs(center)) * f_b
         env_b, _ = _onset_slice(b, b_start - margin, overlap_out * f_b + 2 * margin)
     except Exception:  # noqa: BLE001 — alignment is a refinement; never fail the mix over it
         return 0.0
     t_out = np.arange(0, overlap_out, step)
     oa = np.interp(t_out * f_a, np.arange(len(env_a)) * step, env_a, right=0)
     tb_src = np.arange(len(env_b)) * step - margin  # source time relative to b_start
-    best, best_score = 0.0, -np.inf
+    best, best_score = center, -np.inf
     oa = oa - oa.mean()
     for k in range(-int(max_lag_out / step), int(max_lag_out / step) + 1):
-        lag = k * step
+        lag = center + k * step
         ob = np.interp((t_out + lag) * f_b, tb_src, env_b, left=0, right=0)
         score = float(np.dot(oa, ob - ob.mean()))
         if score > best_score:
@@ -310,8 +322,8 @@ def _lock_beats(A: dict, B: dict, t: dict) -> bool:
     j0 = int(np.argmin(np.abs(ba - A["end"])))
     a_first = int(np.searchsorted(ba, A["start"] - 1e-6))
     best = None
-    for k in (8, 16, 4):
-        if not 3.0 <= k * pa_out <= 6.0:
+    for k in XFADE_BEATS:
+        if not XFADE_MIN_SEC <= k * pa_out <= XFADE_MAX_SEC:
             continue
         for j in range(j0 - STRONG_BEAT_SEARCH, j0 + STRONG_BEAT_SEARCH + 1):
             if j - k < a_first or j >= len(ba) or ba[j] > a.duration - 0.25:
@@ -337,7 +349,26 @@ def _lock_beats(A: dict, B: dict, t: dict) -> bool:
         return False
     ib = max(cands, key=lambda i: beat_strength(b, bb[i]))
     b_start = float(bb[ib])
-    lag = fine_lag(a, float(ba[j - k]), A["f"], b, b_start, f_b, d_out, max_lag_out=0.25 * pa_out)
+
+    # Tempo match measured over exactly the beats that will overlap (long overlaps expose any
+    # tempo error as drift), then corrected from the drift between the overlap's two halves.
+    a0 = float(ba[j - k])
+    pa_ov = period_between(ba, a0, float(ba[j]))
+    pb_ov = period_between(bb, b_start, b_start + d_out * f_b + pb)
+    if pa_ov and pb_ov:
+        pa_out = pa_ov / A["f"]
+        f_b = fold_ratio(pa_out, pb_ov)
+        if abs(f_b - 1) > MAX_STRETCH:
+            return False
+    lag = fine_lag(a, a0, A["f"], b, b_start, f_b, d_out, max_lag_out=0.25 * pa_out)
+    half = d_out / 2
+    lag1 = fine_lag(a, a0, A["f"], b, b_start, f_b, half, max_lag_out=0.12 * pa_out, center=lag)
+    lag2 = fine_lag(a, a0 + half * A["f"], A["f"], b, b_start + half * f_b, f_b, half,
+                    max_lag_out=0.12 * pa_out, center=lag)
+    rate = (lag2 - lag1) / half                # B drifts later by `rate` s per output second
+    if abs(rate) < 0.03 and abs(f_b * (1 + rate) - 1) <= MAX_STRETCH:
+        f_b *= 1 + rate                        # B too slow → play it faster, and vice versa
+        lag = fine_lag(a, a0, A["f"], b, b_start, f_b, d_out, max_lag_out=0.12 * pa_out, center=lag)
     b_start = max(0.0, b_start + lag * f_b)   # B late by `lag` → start it later in its source
 
     # keep B's planned length (in its own source time) after moving its start

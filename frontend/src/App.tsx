@@ -555,7 +555,7 @@ function MixPanel({
           </h2>
           <p className="muted">
             MoodFlow sırasındaki ilk 6 uygun şarkının YouTube sesi <code>yt-dlp</code> ile alınır, en güçlü bölümler
-            seçilir ve geçişlerle ~60–100 sn'lik bir miks üretilir.
+            seçilir ve uzun, vuruşa kilitli geçişlerle ~3 dakikalık bir miks üretilir.
           </p>
         </div>
         <button className="btn btn-primary btn-lg" onClick={onStart} disabled={disabled || busy}>
