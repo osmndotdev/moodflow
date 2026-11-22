@@ -181,7 +181,7 @@ function ApiUsage({ usage }: { usage?: Record<string, { calls: number; cached: n
 
 /* ------------------------------------------------------------------ track table */
 
-function TrackTable({ tracks }: { tracks: Track[] }) {
+function TrackTable({ tracks, excluded }: { tracks: Track[]; excluded?: Set<string> }) {
   return (
     <div className="table-wrap">
       <table className="tracks">
@@ -199,11 +199,14 @@ function TrackTable({ tracks }: { tracks: Track[] }) {
         </thead>
         <tbody>
           {tracks.map((t) => (
-            <tr key={t.occurrence_id}>
+            <tr key={t.occurrence_id} className={excluded?.has(t.occurrence_id) ? "excluded" : undefined}>
               <td className="muted">{t.original_position}</td>
               <td>
                 <div className="song">
-                  <span className="song-title">{t.title}</span>
+                  <span className="song-title">
+                    {t.title}
+                    {excluded?.has(t.occurrence_id) && <span className="excluded-tag">yok sayıldı</span>}
+                  </span>
                   <span className="song-artist">
                     {t.artist} · {fmtTime(t.duration_sec)}
                   </span>
@@ -534,7 +537,21 @@ export default function App() {
     api.health().then(setHealth).catch(() => setHealth(null));
   }, []);
 
-  const tracks = playlist?.tracks ?? [];
+  const tracks = useMemo(() => playlist?.tracks ?? [], [playlist]);
+  // "ignore songs with missing data": anything with at least one of the five features empty
+  const [ignoreMissing, setIgnoreMissing] = useState(false);
+  const incomplete = useMemo(() => tracks.filter((t) => t.features.missing_features?.length), [tracks]);
+  const canIgnore = incomplete.length > 0 && tracks.length - incomplete.length >= 3;
+  const ignoring = ignoreMissing && canIgnore;
+  const excludedIds = useMemo(
+    () => new Set(ignoring ? incomplete.map((t) => t.occurrence_id) : []),
+    [ignoring, incomplete],
+  );
+  // the tracks ranking, chart, order lists and mix work on
+  const activeTracks = useMemo(
+    () => (ignoring ? tracks.filter((t) => !excludedIds.has(t.occurrence_id)) : tracks),
+    [ignoring, tracks, excludedIds],
+  );
   const byId = useMemo(() => Object.fromEntries(tracks.map((t) => [t.occurrence_id, t])), [tracks]);
   // values measured from the downloaded recordings during a mix: shown in the table only
   // (plan v1.8 §6.4: local analysis is for the mix), ranking keeps using provider data
@@ -574,14 +591,14 @@ export default function App() {
 
   // re-rank whenever tracks / mode / custom weights / target curve change (debounced for sliders & dragging)
   useEffect(() => {
-    if (!tracks.length) return;
+    if (!activeTracks.length) return;
     const seq = ++rankSeq.current;
     const handle = window.setTimeout(async () => {
       try {
         setRankError(null);
         const custom = mode === "custom";
         const res = await api.rank(
-          tracks,
+          activeTracks,
           mode,
           custom ? weights : undefined,
           custom && target ? { ...target, strength: curveStrength } : undefined,
@@ -592,7 +609,7 @@ export default function App() {
       }
     }, mode === "custom" ? 200 : 0);
     return () => window.clearTimeout(handle);
-  }, [tracks, mode, weights, target, curveStrength]);
+  }, [activeTracks, mode, weights, target, curveStrength]);
 
   const onTarget = (t: TargetCurve | null) => {
     setTarget(t);
@@ -606,7 +623,7 @@ export default function App() {
     setMixStatus(null);
     setMixStarting(true);
     try {
-      const { mix_id } = await api.startMix(tracks, ranking.ordered_ids);
+      const { mix_id } = await api.startMix(activeTracks, ranking.ordered_ids);
       const poll = async () => {
         try {
           const s = await api.mixStatus(mix_id);
@@ -624,7 +641,7 @@ export default function App() {
     } finally {
       setMixStarting(false);
     }
-  }, [ranking, tracks]);
+  }, [ranking, activeTracks]);
 
   const improvement =
     ranking && ranking.score_before > 0
@@ -695,7 +712,32 @@ export default function App() {
               </details>
             )}
             <ApiUsage usage={playlist.api_usage} />
-            <TrackTable tracks={displayTracks} />
+            <div className="ignore-row">
+              <button
+                className={`chip-btn toggle ${ignoring ? "on" : ""}`}
+                aria-pressed={ignoring}
+                disabled={!canIgnore}
+                title={
+                  incomplete.length === 0
+                    ? "Tüm şarkıların beş özelliği de var."
+                    : !canIgnore
+                      ? "Eksiksiz şarkı sayısı 3'ün altında; yok saymak sıralamayı anlamsız kılar."
+                      : "Açıkken en az bir özelliği eksik olan şarkılar sıralamaya, grafiğe ve miks'e alınmaz."
+                }
+                onClick={() => setIgnoreMissing((v) => !v)}
+              >
+                <span className="toggle-box">{ignoring ? "✓" : ""}</span>
+                Eksik verili şarkıları yok say
+              </button>
+              <span className="muted small-inline">
+                {incomplete.length === 0
+                  ? "Eksik verili şarkı yok."
+                  : ignoring
+                    ? `${incomplete.length} şarkı sıralama ve miks dışında (tabloda soluk gösteriliyor).`
+                    : `${incomplete.length} şarkıda en az bir özellik eksik.`}
+              </span>
+            </div>
+            <TrackTable tracks={displayTracks} excluded={excludedIds} />
             <p className="muted small">
               Öncelik: FreqBlog → ReccoBeats / GetSongBPM (BPM/Key) → Last.fm / MusicBrainz (Genre). Eksik BPM ve enerji, miks
               sırasında indirilen kayıttan yerel olarak ölçülür. Kaynak, durum ve güven için değerin üzerine gelin; <b>≈</b>{" "}
@@ -760,7 +802,7 @@ export default function App() {
             {ranking && (
               <>
                 <FlowChart
-                  original={tracks}
+                  original={activeTracks}
                   ranked={ranked}
                   breakdown={ranking.transition_breakdown}
                   target={mode === "custom" ? target : null}
@@ -775,7 +817,7 @@ export default function App() {
                   hesaplanan geçiş maliyetinden gelir; ayrıntı için üzerine gelin.
                 </p>
                 <div className="orders">
-                  <OrderList title="Orijinal sıra" tracks={tracks} steps={ranking.transition_breakdown?.before} />
+                  <OrderList title="Orijinal sıra" tracks={activeTracks} steps={ranking.transition_breakdown?.before} />
                   <OrderList title="MoodFlow sırası" tracks={ranked} steps={ranking.transition_breakdown?.after} />
                 </div>
                 <p className="muted small">Sıralama yalnızca uygulama içinde yapılır; kaynak playlist değişmez.</p>

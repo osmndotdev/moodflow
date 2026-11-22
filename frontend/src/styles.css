@@ -1048,3 +1048,53 @@ a.prov {
   font-size: 12.5px;
   margin: 2px 0 6px;
 }
+
+/* ignore songs with missing data */
+.ignore-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0 0 12px;
+}
+.small-inline {
+  font-size: 13px;
+}
+.chip-btn.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 12px;
+}
+.chip-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.toggle-box {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  border: 1.5px solid var(--muted);
+  display: inline-grid;
+  place-items: center;
+  font-size: 10px;
+  line-height: 1;
+}
+.chip-btn.toggle.on .toggle-box {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: white;
+}
+.tracks tr.excluded td {
+  opacity: 0.45;
+}
+.excluded-tag {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  white-space: nowrap;
+}
