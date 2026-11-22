@@ -204,7 +204,7 @@ export default function FlowChart({
                 <path d={paths[si]} className="line" />
                 {series[si].map((p, i) =>
                   p.v == null ? null : (
-                    <circle key={i} cx={x(i)} cy={y(p.v)} r={hover === i ? 5 : 4} className="dot" />
+                    <circle key={i} cx={x(i)} cy={y(p.v)} r={(s.id === "orig" ? 3 : 4) + (hover === i ? 1 : 0)} className="dot" />
                   ),
                 )}
                 {ends[si] && (

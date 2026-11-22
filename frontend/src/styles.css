@@ -410,9 +410,12 @@ table.tracks {
   font-size: 12.5px;
 }
 
-/* flow chart (original vs MoodFlow). Series colours validated for CVD separation on --bg-2 */
+/* flow chart (original vs MoodFlow). The original order is recessive context: muted gray,
+   thin dashed line, hollow markers. Gray vs magenta is in the 6-8 CVD band on --bg-2
+   (validated ΔE 7.4), so the dash + hollow markers + direct labels are the required
+   secondary encoding — keep them if the colours change. */
 .flow {
-  --series-orig: #3987e5;
+  --series-orig: #9a93b2;
   --series-mf: #d55181;
   margin-top: 16px;
   background: var(--bg-2);
@@ -479,7 +482,7 @@ table.tracks {
   margin-right: 4px;
 }
 .key.s-orig {
-  background: var(--series-orig);
+  background: repeating-linear-gradient(90deg, var(--series-orig) 0 4px, transparent 4px 7px);
 }
 .key.s-mf {
   background: var(--series-mf);
@@ -516,9 +519,13 @@ table.tracks {
 }
 .flow-plot .s-orig .line {
   stroke: var(--series-orig);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
 }
 .flow-plot .s-orig .dot {
-  fill: var(--series-orig);
+  fill: var(--bg-2);
+  stroke: var(--series-orig);
+  stroke-width: 1.5;
 }
 .flow-plot .s-mf .line {
   stroke: var(--series-mf);
