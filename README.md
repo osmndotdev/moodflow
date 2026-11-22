@@ -62,7 +62,7 @@ just dev
 ```
 
 (`./dev.sh` does the same without just. `just` alone lists the other recipes:
-`setup`, `backend`, `frontend`, `test`.)
+`setup`, `update`, `backend`, `frontend`, `test`.)
 
 Open http://localhost:5173 (Vite proxies `/api` to the backend). The backend port is `MOODFLOW_PORT` in `.env` (default 8000).
 
@@ -75,6 +75,18 @@ Open http://localhost:5173 (Vite proxies `/api` to the backend). The backend por
 Single-port mode (also how a server runs it): after `just setup`, start the backend alone with
 `MOODFLOW_RELOAD=0` and open http://localhost:8000 (or your `MOODFLOW_PORT`); it serves the built page
 and the API on that one port, so a reverse proxy only needs to forward everything to it.
+
+Updating a deployment after pushing a new version: on the server, run
+
+```bash
+just update
+```
+
+It does `git pull --ff-only`, reinstalls Python / frontend dependencies only when `requirements.txt` /
+`frontend/package-lock.json` changed since the last install, upgrades yt-dlp (YouTube changes keep breaking
+older releases), rebuilds the frontend, lists settings that `.env.example` has but `.env` lacks, and finally
+runs `MOODFLOW_RESTART_CMD` from `.env` (e.g. `sudo systemctl restart moodflow`); without it, it reminds
+you to restart the backend yourself. Changes to `.env` itself also only take effect after a restart.
 
 Analytics: the VPS deployment uses [Microsoft Clarity](https://clarity.microsoft.com). Put
 `MOODFLOW_CLARITY_ID=zhr0drdbro` in the **VPS** `.env` only and restart; the backend then adds the Clarity

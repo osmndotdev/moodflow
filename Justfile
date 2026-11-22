@@ -38,11 +38,64 @@ setup:
         .venv/bin/python -m pip install --quiet --upgrade pip
         .venv/bin/python -m pip install --quiet -r requirements.txt
     fi
+    cksum < requirements.txt > .venv/.requirements.cksum  # lets `just update` skip unchanged deps
     npm --prefix frontend ci --no-audit --no-fund
+    cksum < frontend/package-lock.json > frontend/node_modules/.package-lock.cksum
     npm --prefix frontend run build
     if [ ! -f .env ]; then
         cp .env.example .env
         echo "created .env from .env.example; add your API keys there"
+    fi
+
+# After pushing a new version (run where it's deployed): pull, reinstall only changed deps, upgrade yt-dlp, rebuild, restart
+update:
+    git pull --ff-only
+    @# a fresh `just` so a Justfile changed by the pull is the one that runs
+    @just _refresh
+
+_refresh:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ ! -x .venv/bin/python ] || [ ! -d frontend/node_modules ]; then
+        echo "error: no .venv or frontend/node_modules yet; run: just setup" >&2
+        exit 1
+    fi
+    pip_install() {
+        if command -v uv >/dev/null; then
+            uv pip install --quiet --python .venv/bin/python "$@"
+        else
+            .venv/bin/python -m pip install --quiet "$@"
+        fi
+    }
+    if [ "$(cksum < requirements.txt)" != "$(cat .venv/.requirements.cksum 2>/dev/null)" ]; then
+        echo "requirements.txt changed; installing Python dependencies"
+        pip_install -r requirements.txt
+        cksum < requirements.txt > .venv/.requirements.cksum
+    fi
+    # YouTube changes keep breaking older yt-dlp releases, so keep it current on every update
+    old=$(.venv/bin/python -m yt_dlp --version 2>/dev/null || echo none)
+    pip_install --upgrade "yt-dlp[default]"
+    new=$(.venv/bin/python -m yt_dlp --version)
+    [ "$old" = "$new" ] || echo "yt-dlp $old -> $new"
+    if [ "$(cksum < frontend/package-lock.json)" != "$(cat frontend/node_modules/.package-lock.cksum 2>/dev/null)" ]; then
+        echo "package-lock.json changed; installing frontend dependencies"
+        npm --prefix frontend ci --no-audit --no-fund
+        cksum < frontend/package-lock.json > frontend/node_modules/.package-lock.cksum
+    fi
+    npm --prefix frontend run build
+    keys() { grep -oE '^[A-Z_][A-Z0-9_]*=' "$1" 2>/dev/null | tr -d '=' | sort -u || true; }
+    missing=$(comm -23 <(keys .env.example) <(keys .env) | tr '\n' ' ')
+    if [ -n "$missing" ]; then
+        echo "note: .env lacks settings that .env.example has (their defaults apply): $missing"
+    fi
+    restart=$(grep -E '^MOODFLOW_RESTART_CMD=' .env 2>/dev/null | tail -1 | cut -d= -f2- || true)
+    restart=${restart#[\"\']}
+    restart=${restart%[\"\']}
+    if [ -n "$restart" ]; then
+        echo "restarting: $restart"
+        bash -c "$restart"
+    else
+        echo "updated; now restart the backend (set MOODFLOW_RESTART_CMD in .env to have this done for you)"
     fi
 
 # Backend + frontend in one terminal, both auto-reloading (Ctrl-C stops both)
