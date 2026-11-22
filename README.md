@@ -32,17 +32,19 @@ python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
 npm --prefix frontend install
 ```
 
-Dev mode (two terminals):
+Dev mode, both servers in one terminal with auto-reload (Ctrl-C stops both):
 
 ```bash
-.venv/bin/python -m backend
-```
-
-```bash
-npm --prefix frontend run dev
+./dev.sh
 ```
 
 Open http://localhost:5173 (Vite proxies `/api` to the backend). The backend port is `MOODFLOW_PORT` in `.env` (default 8000).
+
+- Frontend edits hot-reload in the browser (Vite).
+- Backend edits to `backend/*.py` restart the API automatically. Only `backend/` is watched, so mix
+  downloads in `tmp/` don't trigger restarts. A restart drops any mix in progress (jobs are in memory),
+  and changes to `.env` still need a manual restart. Set `MOODFLOW_RELOAD=0` to turn reloading off.
+- Separately: `.venv/bin/python -m backend` and `npm --prefix frontend run dev`.
 
 Single-port mode: `npm --prefix frontend run build`, then start the backend alone and open http://localhost:8000 (or your `MOODFLOW_PORT`).
 
