@@ -98,10 +98,13 @@ deletes Clarity's cookies and reloads. With the variable empty (the default) the
 tag, so local dev (Vite on :5173) and local single-port runs collect nothing; the same holds when the page
 is opened as `localhost` / `127.x` / `[::1]` (e.g. through an SSH tunnel).
 
-Privacy policy: `frontend/privacy/index.html` (Turkish, KVKK + GDPR), a second Vite page served at
-`/privacy/` and linked from the footer and the banner; it can also serve as the privacy policy URL of the
-Google OAuth consent screen. Update it (and its date) when the data the app handles changes: new feature
-providers, cookies or storage keys, retention times (`MOODFLOW_*_TTL`, provider cache days) or analytics.
+Legal pages (Turkish), extra Vite pages linked from the footer: the privacy policy (KVKK + GDPR) at
+`/privacy/` (`frontend/privacy/index.html`, also linked from the banner) and the terms of service at
+`/terms/` (`frontend/terms/index.html`, incl. the YouTube Terms of Service link the YouTube API Services
+policies require). Use `<public origin>/privacy/` and `/terms/` as the privacy policy and terms URLs of the
+Google OAuth consent screen. Update the privacy policy (and its date) when the data the app handles
+changes: new feature providers, cookies or storage keys, retention times (`MOODFLOW_*_TTL`, provider
+cache days) or analytics.
 
 Tests (offline, ~10 s; downloads and network are faked, audio is synthesized):
 

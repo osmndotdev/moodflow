@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { LuCookie } from "react-icons/lu";
 import { CONSENT_HASH, OPEN_CONSENT_EVENT, clarityProjectId, setConsent, storedConsent, type Consent } from "./consent";
 
 /* Shown only where analytics is configured (the VPS) and the visitor hasn't chosen yet, or when
@@ -28,14 +29,17 @@ export default function ConsentBanner() {
 
   return (
     <section className="consent" role="dialog" aria-labelledby="consent-title" aria-describedby="consent-text">
-      <h2 id="consent-title">Çerez tercihi</h2>
-      <p id="consent-text">
-        İzin verirseniz MoodFlow'u geliştirmek için <strong>Microsoft Clarity</strong> analiz çerezlerini kullanırız:
-        tıklama, kaydırma ve fare hareketleriniz oturum kaydı ve ısı haritası olarak Microsoft'a gönderilir.
-        Reddederseniz hiçbir analiz aracı yüklenmez ve uygulama aynen çalışır. Kararınızı sayfanın altındaki
-        "Çerez tercihleri" bağlantısından istediğiniz zaman değiştirebilirsiniz.{" "}
-        <a href="/privacy/">Gizlilik politikası</a>
-      </p>
+      <div className="consent-icon" aria-hidden="true">
+        <LuCookie />
+      </div>
+      <div className="consent-body">
+        <h2 id="consent-title">Çerezlere izin veriyor musunuz?</h2>
+        <p id="consent-text">
+          MoodFlow'u geliştirmek için <strong>Microsoft Clarity</strong> ile tıklama ve kaydırma gibi kullanım
+          verilerini toplamak istiyoruz. Reddederseniz hiçbir analiz aracı yüklenmez; izninizi istediğiniz zaman
+          sayfa altından geri alabilirsiniz. <a href="/privacy/">Gizlilik politikası</a>
+        </p>
+      </div>
       <div className="consent-actions">
         <button type="button" className="btn" onClick={() => choose("denied")}>
           Reddet

@@ -1246,7 +1246,7 @@ export default function App() {
       <footer className="muted small">
         MoodFlow demo · React + FastAPI + yt-dlp + librosa + FFmpeg ·{" "}
         <a href="https://getsongbpm.com" target="_blank" rel="noreferrer">BPM &amp; key data by GetSongBPM</a> ·{" "}
-        <a href="/privacy/">Gizlilik</a>
+        <a href="/privacy/">Gizlilik</a> · <a href="/terms/">Kullanım şartları</a>
         {clarityProjectId() && (
           <>
             {" · "}
