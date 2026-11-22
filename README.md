@@ -35,8 +35,11 @@ npm --prefix frontend install
 Dev mode, both servers in one terminal with auto-reload (Ctrl-C stops both):
 
 ```bash
-./dev.sh
+just dev
 ```
+
+(`./dev.sh` does the same without [just](https://github.com/casey/just). `just` alone lists the other recipes:
+`backend`, `frontend`, `test`.)
 
 Open http://localhost:5173 (Vite proxies `/api` to the backend). The backend port is `MOODFLOW_PORT` in `.env` (default 8000).
 
