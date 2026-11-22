@@ -15,10 +15,11 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import arrangement, audio_sources, mixing
+from .analytics import clarity_id, inject_clarity
 from .features import FeatureService, build_feature_service, fill_from_downloaded_audio
 from .importers import PlaylistImportError, import_playlist
 from .ranking import rank
@@ -276,5 +277,20 @@ def health() -> dict:
 
 # serve the built frontend if present (single command demo: `npm run build` then uvicorn)
 _dist = ROOT / "frontend" / "dist"
+# Microsoft Clarity: only the VPS .env sets MOODFLOW_CLARITY_ID, so nothing else collects data
+_raw_clarity = os.getenv("MOODFLOW_CLARITY_ID", "")
+CLARITY_ID = clarity_id(_raw_clarity)
+if _raw_clarity.strip() and not CLARITY_ID:
+    log.warning("MOODFLOW_CLARITY_ID %r is not a valid Clarity project ID; analytics stay off", _raw_clarity)
 if _dist.is_dir():
+    if CLARITY_ID:
+        log.info("Microsoft Clarity enabled (project %s)", CLARITY_ID)
+
+        @app.get("/", include_in_schema=False)
+        @app.get("/index.html", include_in_schema=False)
+        def index_with_clarity() -> HTMLResponse:
+            # read per request so a rebuilt frontend is picked up without a restart
+            html = (_dist / "index.html").read_text(encoding="utf-8")
+            return HTMLResponse(inject_clarity(html, CLARITY_ID), headers={"Cache-Control": "no-cache"})
+
     app.mount("/", StaticFiles(directory=_dist, html=True), name="frontend")

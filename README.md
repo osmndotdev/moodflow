@@ -63,6 +63,12 @@ Single-port mode (also how a server runs it): after `just setup`, start the back
 `MOODFLOW_RELOAD=0` and open http://localhost:8000 (or your `MOODFLOW_PORT`); it serves the built page
 and the API on that one port, so a reverse proxy only needs to forward everything to it.
 
+Analytics: the VPS deployment uses [Microsoft Clarity](https://clarity.microsoft.com). Put
+`MOODFLOW_CLARITY_ID=zhr0drdbro` in the **VPS** `.env` only and restart; the backend then adds the Clarity
+tag to the page it serves (`backend/analytics.py`). With the variable empty (the default) no tag is sent,
+so local dev (Vite on :5173) and local single-port runs collect nothing; the tag also skips itself when
+the page is opened as `localhost` / `127.x` / `[::1]` (e.g. through an SSH tunnel).
+
 Tests (offline, ~10 s; downloads and network are faked, audio is synthesized):
 
 ```bash
