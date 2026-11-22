@@ -48,6 +48,7 @@ import {
 } from "./api";
 import ExportPanel from "./ExportPanel";
 import FlowChart from "./FlowChart";
+import PreviewPlayer, { PreviewButton } from "./PreviewPlayer";
 import WeightBar from "./WeightBar";
 
 const EXAMPLES: { platform: Platform; label: string; url: string }[] = [
@@ -299,7 +300,17 @@ function ApiUsage({ usage }: { usage?: Record<string, { calls: number; cached: n
 
 /* ------------------------------------------------------------------ track table */
 
-function TrackTable({ tracks, excluded }: { tracks: Track[]; excluded?: Set<string> }) {
+function TrackTable({
+  tracks,
+  excluded,
+  previewId,
+  onPreview,
+}: {
+  tracks: Track[];
+  excluded?: Set<string>;
+  previewId?: string | null;
+  onPreview?: (t: Track | null) => void;
+}) {
   return (
     <div className="table-wrap">
       <table className="tracks">
@@ -327,9 +338,16 @@ function TrackTable({ tracks, excluded }: { tracks: Track[]; excluded?: Set<stri
         </thead>
         <tbody>
           {tracks.map((t) => (
-            <tr key={t.occurrence_id} className={excluded?.has(t.occurrence_id) ? "excluded" : undefined}>
+            <tr
+              key={t.occurrence_id}
+              className={`${excluded?.has(t.occurrence_id) ? "excluded" : ""} ${previewId === t.occurrence_id ? "previewing" : ""}`}
+            >
               <td className="muted">{t.original_position}</td>
               <td>
+                <div className="song-cell">
+                  {onPreview && (
+                    <PreviewButton track={t} active={previewId === t.occurrence_id} onToggle={onPreview} />
+                  )}
                 <div className="song">
                   <span className="song-title">
                     {t.title}
@@ -338,6 +356,7 @@ function TrackTable({ tracks, excluded }: { tracks: Track[]; excluded?: Set<stri
                   <span className="song-artist">
                     {t.artist} · {fmtTime(t.duration_sec)}
                   </span>
+                </div>
                 </div>
               </td>
               <td className="num">
@@ -458,12 +477,16 @@ function OrderList({
   steps,
   pinnedId,
   onPin,
+  previewId,
+  onPreview,
 }: {
   title: string;
   tracks: Track[];
   steps?: TransitionStep[];
   pinnedId?: string | null;
   onPin?: (id: string | null) => void;
+  previewId?: string | null;
+  onPreview?: (t: Track | null) => void;
 }) {
   return (
     <div className="order-col">
@@ -506,6 +529,9 @@ function OrderList({
                     </span>
                   </span>
                 </span>
+                {onPreview && (
+                  <PreviewButton track={t} active={previewId === t.occurrence_id} onToggle={onPreview} />
+                )}
                 {onPin && (
                   <button
                     className={`pin-btn ${pinnedId === t.occurrence_id ? "on" : ""}`}
@@ -745,7 +771,10 @@ function MixPanel({
                 controls
                 autoPlay
                 src={status.audio_url}
-                onPlay={() => setPlaying(true)}
+                onPlay={() => {
+                  setPlaying(true);
+                  window.dispatchEvent(new Event("moodflow:mixplay")); // closes a song preview
+                }}
                 onPause={() => setPlaying(false)}
                 onEnded={() => setPlaying(false)}
                 onTimeUpdate={(e) => setPlayTime(e.currentTarget.currentTime)}
@@ -801,6 +830,16 @@ export default function App() {
   const [target, setTarget] = useState<TargetCurve | null>(null);
   const [curveStrength, setCurveStrength] = useState(0.7);
   const [firstId, setFirstId] = useState<string | null>(null); // song pinned as #1 of the result
+  const [preview, setPreview] = useState<Track | null>(null); // song being listened to in the dock
+  const onPreview = useCallback((t: Track | null) => {
+    if (t) document.querySelectorAll("audio").forEach((a) => a.pause()); // one thing playing at a time
+    setPreview(t);
+  }, []);
+  useEffect(() => {
+    const close = () => setPreview(null);
+    window.addEventListener("moodflow:mixplay", close);
+    return () => window.removeEventListener("moodflow:mixplay", close);
+  }, []);
   const rankSeq = useRef(0);
   const [ranking, setRanking] = useState<RankResponse | null>(null);
   const [rankError, setRankError] = useState<string | null>(null);
@@ -856,6 +895,7 @@ export default function App() {
     setImporting(true);
     setImportError(null);
     setPlaylist(null);
+    setPreview(null);
     setRanking(null);
     setFirstId(null);
     setMixStatus(null);
@@ -931,7 +971,7 @@ export default function App() {
       : 0;
 
   return (
-    <div className="app">
+    <div className={`app ${preview ? "has-preview" : ""}`}>
       <header className="hero">
         <div className="logo">
           <EqBars className="logo-mark" /> MoodFlow
@@ -1068,7 +1108,12 @@ export default function App() {
                     : `${incomplete.length} şarkıda en az bir özellik eksik.`}
               </span>
             </div>
-            <TrackTable tracks={displayTracks} excluded={excludedIds} />
+            <TrackTable
+              tracks={displayTracks}
+              excluded={excludedIds}
+              previewId={preview?.occurrence_id ?? null}
+              onPreview={onPreview}
+            />
             <p className="muted small">
               Öncelik: FreqBlog → ReccoBeats / GetSongBPM (BPM/Key) → Last.fm / MusicBrainz (Genre). Eksik BPM ve enerji, miks
               sırasında indirilen kayıttan yerel olarak ölçülür. Kaynak, durum ve güven için değerin üzerine gelin; <b>≈</b>{" "}
@@ -1158,6 +1203,8 @@ export default function App() {
                     steps={ranking.transition_breakdown?.before}
                     pinnedId={pinnedId}
                     onPin={setFirstId}
+                    previewId={preview?.occurrence_id ?? null}
+                    onPreview={onPreview}
                   />
                   <OrderList
                     title="MoodFlow sırası"
@@ -1165,6 +1212,8 @@ export default function App() {
                     steps={ranking.transition_breakdown?.after}
                     pinnedId={pinnedId}
                     onPin={setFirstId}
+                    previewId={preview?.occurrence_id ?? null}
+                    onPreview={onPreview}
                   />
                 </div>
                 <p className="muted small">Sıralama yalnızca uygulama içinde yapılır; kaynak playlist değişmez.</p>
@@ -1190,6 +1239,8 @@ export default function App() {
           />
         </>
       )}
+
+      {preview && <PreviewPlayer track={preview} onClose={() => setPreview(null)} />}
 
       <footer className="muted small">
         MoodFlow demo · React + FastAPI + yt-dlp + librosa + FFmpeg ·{" "}
