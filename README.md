@@ -35,7 +35,10 @@ just setup
 ```
 
 It uses `python3`; pick another interpreter with `just python=python3.14 setup`. Re-run it after
-pulling changes. Without [just](https://github.com/casey/just), run the same steps by hand:
+pulling changes. If [uv](https://docs.astral.sh/uv/) is installed it creates the environment and installs
+with uv; otherwise it uses `venv` + pip, and repairs a `.venv` that has no pip. On Debian/Ubuntu the latter
+needs `sudo apt install python3-venv` (or `python3.14-venv` for a versioned Python); setup says so if it's
+missing. Without [just](https://github.com/casey/just), run the same steps by hand:
 `python3 -m venv .venv`, `.venv/bin/pip install -r requirements.txt`, `npm --prefix frontend ci`,
 `npm --prefix frontend run build`.
 
