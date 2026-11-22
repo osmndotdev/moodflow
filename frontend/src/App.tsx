@@ -646,8 +646,8 @@ export default function App() {
               <h2>Sıralama modu</h2>
               {ranking && (
                 <span className="score">
-                  {ranking.curve_error_after != null && mode === "custom" && (
-                    <span className="curve-score" title="Hedef eğriden ortalama sapma (0 = tam uyum, playlist aralığına göre)">
+                  {ranking.curve_error_after != null && (
+                    <span className="curve-score" title="Hedef eğriden (Custom çizimi veya Emotional yayı) ortalama sapma; 0 = tam uyum, playlist aralığına göre">
                       Eğri sapması <b>{ranking.curve_error_before?.toFixed(2)}</b> →{" "}
                       <b className="good">{ranking.curve_error_after.toFixed(2)}</b>
                     </span>
@@ -705,6 +705,8 @@ export default function App() {
                   onTarget={onTarget}
                   strength={curveStrength}
                   onStrength={setCurveStrength}
+                  mode={mode}
+                  modeCurve={mode === "emotional" ? ranking.curve : null}
                 />
                 <div className="orders">
                   <OrderList title="Orijinal sıra" tracks={tracks} />

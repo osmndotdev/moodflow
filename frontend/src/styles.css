@@ -964,3 +964,8 @@ a.prov {
 .curve-score {
   margin-right: 10px;
 }
+
+.curve-note {
+  font-size: 12.5px;
+  margin: 2px 0 6px;
+}

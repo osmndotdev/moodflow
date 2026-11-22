@@ -280,6 +280,20 @@ def _start_indices(obj: Objective, tracks: list[Track], k: int = 5) -> list[int]
     return seen[:k]
 
 
+def _curve_info(obj: Objective, ids: list[str], mode: Mode, target: TargetCurve | None) -> dict | None:
+    """The curve the optimizer actually used, for charting: per-position targets and per-track
+    values on the same playlist-relative 0..1 scale (0 = playlist minimum, 1 = maximum)."""
+    if not obj.has_curve:
+        return None
+    feature = target.feature if (mode == "custom" and target is not None) else "intensity"
+    return {
+        "feature": feature,
+        "share": round(obj.curve_share, 3),
+        "targets": [round(t, 4) for t in obj.curve_targets],
+        "values": {oid: None if v is None else round(v, 4) for oid, v in zip(ids, obj.curve_values)},
+    }
+
+
 def transition_breakdown(order: list[Track], weights: dict[str, float]) -> list[dict]:
     """Per-step distances for charting: each feature's d_f (0..1, None if not comparable) + weighted total."""
     out = []
@@ -322,6 +336,7 @@ def rank(tracks: list[Track], mode: Mode = "daily", weights: Weights | None = No
         # mean distance to the curve (0 = exact fit), for a user target or the emotional arc
         "curve_error_before": None if err_before is None else round(err_before, 4),
         "curve_error_after": None if err_after is None else round(err_after, 4),
+        "curve": _curve_info(obj, ids, mode, target),
         "transition_costs": [round(obj.cost[a][b], 3) for a, b in zip(best, best[1:])],
         "transition_breakdown": {
             "before": transition_breakdown(tracks, resolve_weights(mode, weights)),

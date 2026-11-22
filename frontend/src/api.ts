@@ -74,6 +74,13 @@ export interface TargetCurve {
   strength: number; // 0 = smooth transitions only … 1 = fit the curve only
 }
 
+export interface ModeCurve {
+  feature: "intensity" | CurveFeature;
+  share: number;
+  targets: number[];
+  values: Record<string, number | null>;
+}
+
 export interface RankResponse {
   ordered_ids: string[];
   score_before: number;
@@ -81,6 +88,8 @@ export interface RankResponse {
   kept_original: boolean;
   curve_error_before: number | null;
   curve_error_after: number | null;
+  /** the curve the optimizer used (Emotional arc or Custom target), playlist-relative 0..1 */
+  curve: ModeCurve | null;
   transition_costs: number[];
   transition_breakdown: { before: TransitionStep[]; after: TransitionStep[] };
 }

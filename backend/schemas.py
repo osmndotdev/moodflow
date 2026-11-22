@@ -83,6 +83,9 @@ class RankResponse(BaseModel):
     kept_original: bool = False
     curve_error_before: float | None = None
     curve_error_after: float | None = None
+    # the curve used (Emotional arc or Custom target), playlist-relative 0..1:
+    # {"feature", "share", "targets": [per position], "values": {occurrence_id: value}}
+    curve: dict | None = None
     transition_costs: list[float] = []
     # per-step feature distances (0..1, null = not comparable) for the original and new order
     transition_breakdown: dict[str, list[dict[str, float | None]]] = {}

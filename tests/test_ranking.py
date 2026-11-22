@@ -172,3 +172,15 @@ def test_rank_api_accepts_target():
     assert res["ordered_ids"] == ["item-003", "item-001", "item-000", "item-002"]
     bad = TestClient(app).post("/api/rank", json={**body, "target": {"feature": "key", "points": [1, 2]}})
     assert bad.status_code == 422
+
+
+def test_rank_returns_the_curve_it_used():
+    tracks = [_t(i, energy=e, valence=e) for i, e in enumerate([0.9, 0.2, 0.5, 0.7, 0.3])]
+    emo = rank(tracks, "emotional")["curve"]
+    assert emo["feature"] == "intensity" and len(emo["targets"]) == 5
+    assert emo["targets"][2] == max(emo["targets"])  # calm → peak → calm
+    assert set(emo["values"]) == {t.occurrence_id for t in tracks}
+    assert all(0 <= v <= 1 for v in emo["values"].values())
+    assert rank(tracks, "daily")["curve"] is None and rank(tracks, "dj")["curve"] is None
+    custom = rank(tracks, "custom", None, TargetCurve(feature="energy", points=[0.2, 0.9], strength=1))["curve"]
+    assert custom["feature"] == "energy" and custom["targets"][0] == 0 and custom["targets"][-1] == 1

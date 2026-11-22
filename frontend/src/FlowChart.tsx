@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { CurveFeature, TargetCurve, Track, TransitionStep } from "./api";
+import type { CurveFeature, Mode, ModeCurve, TargetCurve, Track, TransitionStep } from "./api";
 
 /* Original vs MoodFlow order, one metric at a time (one y-axis per chart, never two).
    Values: per position. Transition fit: per step, the 0..1 distance the ranker minimises. */
@@ -84,6 +84,8 @@ export default function FlowChart({
   onTarget,
   strength,
   onStrength,
+  mode,
+  modeCurve,
 }: {
   original: Track[];
   ranked: Track[];
@@ -93,11 +95,37 @@ export default function FlowChart({
   onTarget: (t: TargetCurve | null) => void;
   strength: number;
   onStrength: (s: number) => void;
+  mode: Mode;
+  /** Emotional mode's built-in target (intensity arc), shown read-only */
+  modeCurve: ModeCurve | null;
 }) {
   const svgRef = useRef<SVGSVGElement>(null);
   const dragRef = useRef<number | null>(null);
   const [metricId, setMetricId] = useState("energy");
-  const metric = METRICS.find((m) => m.id === metricId)!;
+  const intensity = modeCurve?.feature === "intensity" ? modeCurve : null;
+  const metrics: Metric[] = useMemo(
+    () =>
+      intensity
+        ? [
+            {
+              id: "intensity",
+              group: "value",
+              label: "Yoğunluk",
+              get: (t: Track) => intensity.values[t.occurrence_id] ?? null,
+              fmt: fmt2,
+              hint: "Yoğunluk = 0.7·energy + 0.3·valence, playlist içinde 0–1'e ölçekli (Emotional modun hedeflediği değer)",
+            },
+            ...METRICS,
+          ]
+        : METRICS,
+    [intensity],
+  );
+  const metric = metrics.find((m) => m.id === metricId) ?? metrics.find((m) => m.id === "energy")!;
+  // entering Emotional mode: show the value its curve targets
+  const hasIntensity = !!intensity;
+  useEffect(() => {
+    if (hasIntensity) setMetricId("intensity");
+  }, [hasIntensity]);
   const [boxRef, width] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<number | null>(null);
 
@@ -117,7 +145,7 @@ export default function FlowChart({
 
   // y domain: transitions share a fixed 0..1 scale; values are padded around the data
   let ticks: number[];
-  if (metric.group === "step") ticks = [0, 0.25, 0.5, 0.75, 1];
+  if (metric.group === "step" || metric.id === "intensity") ticks = [0, 0.25, 0.5, 0.75, 1];
   else if (!values.length) ticks = [0, 1];
   else {
     const lo = Math.min(...values);
@@ -164,7 +192,9 @@ export default function FlowChart({
   }
 
   // ---- target curve (value metrics only)
-  const curveFeature: CurveFeature | null = metric.group === "value" ? (metric.id as CurveFeature) : null;
+  const curveFeature: CurveFeature | null =
+    metric.group === "value" && metric.id !== "intensity" ? (metric.id as CurveFeature) : null;
+  const showModeCurve = metric.id === "intensity" && !!intensity && values.length > 0;
   const showCurve = !!target && !!curveFeature && target.feature === curveFeature && values.length > 0;
   const dataLo = values.length ? Math.min(...values) : 0;
   const dataHi = values.length ? Math.max(...values) : 1;
@@ -216,14 +246,14 @@ export default function FlowChart({
     <div className="flow">
       <div className="flow-controls" role="group" aria-label="Grafik ölçüsü">
         <span className="flow-group-label">Değer</span>
-        {METRICS.filter((m) => m.group === "value").map((m) => (
-          <button key={m.id} className={`chip-btn ${m.id === metricId ? "on" : ""}`} onClick={() => setMetricId(m.id)}>
+        {metrics.filter((m) => m.group === "value").map((m) => (
+          <button key={m.id} className={`chip-btn ${m.id === metric.id ? "on" : ""}`} onClick={() => setMetricId(m.id)}>
             {m.label}
           </button>
         ))}
         <span className="flow-group-label">Geçiş uyumu</span>
         {METRICS.filter((m) => m.group === "step").map((m) => (
-          <button key={m.id} className={`chip-btn ${m.id === metricId ? "on" : ""}`} onClick={() => setMetricId(m.id)}>
+          <button key={m.id} className={`chip-btn ${m.id === metric.id ? "on" : ""}`} onClick={() => setMetricId(m.id)}>
             {m.label}
           </button>
         ))}
@@ -237,13 +267,30 @@ export default function FlowChart({
               <i className={`key ${s.cls}`} /> {s.name}
             </span>
           ))}
-          {showCurve && (
+          {(showCurve || showModeCurve) && (
             <span>
-              <i className="key s-target" /> Hedef
+              <i className="key s-target" /> {showModeCurve ? "Emotional hedefi" : "Hedef"}
             </span>
           )}
         </span>
       </div>
+
+      {showModeCurve && (
+        <p className="curve-note muted">
+          Emotional hedefi: sakin → zirve → sakin. Skorun %{Math.round(intensity!.share * 100)}'i bu eğriye uyumdan,
+          kalanı geçiş uyumundan gelir. Kendi eğrinizi çizmek için Energy, BPM veya Valence görünümüne geçin (Custom
+          moda geçer).
+        </p>
+      )}
+      {curveFeature && values.length > 0 && !target && (mode === "daily" || mode === "dj") && (
+        <p className="curve-note muted">
+          {mode === "dj" ? "DJ Mix" : "Daily"} modunda hedef eğri yok: yalnızca ardışık şarkıların uyumu optimize edilir,
+          çizginin şekli bunun sonucudur.
+        </p>
+      )}
+      {curveFeature && values.length > 0 && mode === "emotional" && (
+        <p className="curve-note muted">Emotional modun hedef eğrisi Yoğunluk görünümünde.</p>
+      )}
 
       {curveFeature && values.length > 0 && (
         <div className="curve-bar">
@@ -310,6 +357,15 @@ export default function FlowChart({
               ) : null,
             )}
             {hover != null && <line className="crosshair" x1={x(hover)} x2={x(hover)} y1={pad.t} y2={pad.t + ih} />}
+            {showModeCurve && (
+              <g className="target">
+                <polyline
+                  className="target-band"
+                  points={intensity!.targets.map((v, i) => `${x(i)},${y(v)}`).join(" ")}
+                />
+                <polyline className="target-line" points={intensity!.targets.map((v, i) => `${x(i)},${y(v)}`).join(" ")} />
+              </g>
+            )}
             {showCurve && (
               <g className="target">
                 <polyline
@@ -402,6 +458,13 @@ export default function FlowChart({
                 <i className="key s-target" />
                 <b>{fmt(interpCurve(target!.points, hover, n))}</b>
                 <span className="tip-name">Hedef</span>
+              </div>
+            )}
+            {showModeCurve && intensity!.targets[hover] != null && (
+              <div className="tip-row">
+                <i className="key s-target" />
+                <b>{fmt2(intensity!.targets[hover])}</b>
+                <span className="tip-name">Emotional hedefi</span>
               </div>
             )}
           </div>
