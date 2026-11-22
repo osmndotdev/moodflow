@@ -200,3 +200,21 @@ def sf_read(path):
 def sf_write(path, y, sr):
     import soundfile as sf
     sf.write(path, y, sr)
+
+
+def test_precise_bpm_beats_librosas_tempo_grid():
+    period = 60 / 168.9
+    frame = 512 / 22050
+    beats = np.round(np.arange(300) * period / frame) * frame + 5.0  # frame-quantised, like librosa
+    assert arrangement.precise_bpm(beats) == pytest.approx(168.9, abs=0.15)
+
+
+def test_close_fast_tempos_are_beat_matched(tmp_path):
+    """161.5 vs 169 BPM (4.6 % apart) used to look >6 % apart on librosa's coarse tempo grid."""
+    from tests.conftest import make_beat_wav
+    a = arrangement.analyze_track(make_beat_wav(tmp_path / "a.wav", bpm=161.5, seconds=90, freq=220))
+    b = arrangement.analyze_track(make_beat_wav(tmp_path / "b.wav", bpm=169.0, seconds=90, freq=330))
+    assert a.bpm == pytest.approx(161.5, rel=0.01) and b.bpm == pytest.approx(169.0, rel=0.01)
+    assert arrangement.plan_transition(a, b)[0] == "beat_crossfade"
+    t = arrangement.build_plan([("A", a), ("B", b)])["transitions"][0]
+    assert t["type"] == "beat_crossfade" and t["tempo_change_pct"] == pytest.approx(-4.4, abs=0.6)

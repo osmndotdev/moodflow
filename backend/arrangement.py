@@ -65,7 +65,7 @@ def analyze_track(path: Path, max_minutes: float = 8) -> TrackAnalysis:
         raise AnalysisError("ses sessiz görünüyor")
     tempo, beats = librosa.beat.beat_track(y=y, sr=sr, hop_length=HOP)
     beat_times = librosa.frames_to_time(beats, sr=sr, hop_length=HOP)
-    bpm = float(np.atleast_1d(tempo)[0]) or None
+    bpm = precise_bpm(beat_times) or float(np.atleast_1d(tempo)[0]) or None
     bass = librosa.onset.onset_strength(y=y, sr=sr, hop_length=HOP, fmax=200, n_mels=32)
     return TrackAnalysis(duration, bpm, beat_times, beat_confidence(beat_times), rms, Path(path), bass)
 
@@ -80,7 +80,21 @@ def beat_confidence(beat_times: np.ndarray) -> float:
 
 # --------------------------------------------------------------------------- transitions
 
-def bpm_close(a: float | None, b: float | None, tol: float = 0.06) -> bool:
+def precise_bpm(beat_times: np.ndarray) -> float | None:
+    """Tempo from a line fit through the tracked beats (middle 80 % of the song).
+
+    librosa's overall tempo estimate snaps to a coarse grid (161.5, 172.3 … BPM, 3–7 % apart at
+    fast tempos), which made beat-matchable neighbours look too far apart; the beats themselves
+    pin the tempo down far more precisely and on the same metrical level we align on.
+    """
+    if len(beat_times) < 16:
+        return None
+    trim = len(beat_times) // 10
+    period = fit_period(beat_times[trim: len(beat_times) - trim])
+    return 60.0 / period if period else None
+
+
+def bpm_close(a: float | None, b: float | None, tol: float = 0.08) -> bool:
     if not a or not b:
         return False
     hi, lo = max(a, b), min(a, b)
