@@ -19,7 +19,7 @@ No login, no OAuth, nothing is written back to YouTube/Spotify, no uploads.
 - **API keys (server-side, developer-owned; no end-user auth):** copy `.env.example` → `.env` and fill in
   - `FREQBLOG_API_KEY` — primary source for all five features. Free key (1,000 lookups/month, no card): https://freqblog.com/#pricing
   - `GETSONGBPM_API_KEY` (missing BPM/key) and `LASTFM_API_KEY` (missing genre) — optional fallbacks, skipped when empty.
-    When GetSongBPM is active, the page shows the backlink to getsongbpm.com that its free tier requires.
+    The page footer always carries the "BPM & key data by GetSongBPM" backlink its free tier requires.
 
   Without keys the app still runs: BPM and key come from ReccoBeats (keyless) where it knows the track and
   genre from MusicBrainz where it answers in time. Energy and mood stay empty before the mix, since v1.8

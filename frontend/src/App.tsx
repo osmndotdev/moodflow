@@ -1115,12 +1115,8 @@ export default function App() {
       )}
 
       <footer className="muted small">
-        MoodFlow demo · React + FastAPI + yt-dlp + librosa + FFmpeg
-        {health?.feature_providers.getsongbpm === null && (
-          <>
-            {" "}· BPM/Key verisi: <a href="https://getsongbpm.com" target="_blank" rel="noreferrer">GetSongBPM</a>
-          </>
-        )}
+        MoodFlow demo · React + FastAPI + yt-dlp + librosa + FFmpeg ·{" "}
+        <a href="https://getsongbpm.com" target="_blank" rel="noreferrer">BPM &amp; key data by GetSongBPM</a>
       </footer>
     </div>
   );
