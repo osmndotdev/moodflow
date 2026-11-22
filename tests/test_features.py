@@ -213,3 +213,86 @@ def test_auth_error_surfaces_as_warning():
     t = _track()
     warnings = FeatureService([fb]).enrich([t])
     assert any("reddedildi" in w for w in warnings)
+
+
+# ------------------------------------------------------------------ ReccoBeats
+
+from backend.feature_providers import ReccoBeatsProvider  # noqa: E402
+
+TAKE_ON_ME_FEATS = {"id": "db14", "href": "https://open.spotify.com/track/2WfaOiMkCvy7F5fcp2zZ8L",
+                    "tempo": 84.412, "key": 6, "mode": 0, "energy": 0.9, "valence": 0.88}
+
+
+def _spotify(source_id, title="Take On Me", artist="a-ha", duration=225.0, i=1):
+    t = _track(title=title, artist=artist, duration=duration, i=i)
+    t.source_id = source_id
+    return t
+
+
+def test_reccobeats_batches_spotify_ids_once():
+    calls = []
+
+    def handler(req):
+        calls.append((req.url.path, dict(req.url.params)))
+        assert req.url.path == "/v1/audio-features"
+        return httpx.Response(200, json={"content": [TAKE_ON_ME_FEATS]})
+
+    p = ReccoBeatsProvider(client=_client(handler))
+    known, unknown = _spotify("2WfaOiMkCvy7F5fcp2zZ8L"), _spotify("4HCOHRCSQelz2GPX8iTamO", i=2)
+    p.begin_batch([known, unknown])
+    assert calls == [("/v1/audio-features", {"ids": "2WfaOiMkCvy7F5fcp2zZ8L,4HCOHRCSQelz2GPX8iTamO"})]
+    res = p.lookup_track(known)
+    assert res.fields == {"bpm": 84.4, "camelot": "11A", "key": "F#-Minor"}  # half-time kept; ranking treats 2x as compatible
+    assert len(calls) == 1  # served from the batch, no per-track request
+
+
+def test_reccobeats_title_search_for_youtube_items():
+    def handler(req):
+        if req.url.path == "/v1/track/search":
+            assert req.url.params["searchText"] == "Take On Me"
+            return httpx.Response(200, json={"content": [
+                {"id": "cover", "trackTitle": "Take On Me", "artists": [{"name": "Some Cover Band"}], "durationMs": 225000},
+                {"id": "live1", "trackTitle": "Take On Me - Live", "artists": [{"name": "a-ha"}], "durationMs": 240000},
+                {"id": "db14", "trackTitle": "Take on Me", "artists": [{"name": "a-ha"}], "durationMs": 225280},
+            ]})
+        assert req.url.path == "/v1/track/db14/audio-features"
+        return httpx.Response(200, json=TAKE_ON_ME_FEATS)
+
+    t = _track(title="Take On Me (Official Video)", artist="a-ha", duration=244)
+    t.platform = "youtube"
+    res = ReccoBeatsProvider(client=_client(handler)).lookup_track(t)
+    assert res.fields["camelot"] == "11A" and res.fields["bpm"] == 84.4
+
+
+def test_reccobeats_rejects_wrong_artist_and_unknown_key():
+    search = {"content": [{"id": "x", "trackTitle": "Take On Me", "artists": [{"name": "Someone Else"}], "durationMs": 225000}]}
+    p = ReccoBeatsProvider(client=_client(lambda r: httpx.Response(200, json=search)))
+    assert p.lookup("Take On Me", "a-ha", 225) is None
+    assert ReccoBeatsProvider._normalise({"tempo": 0, "key": -1, "mode": 1}) is None
+
+
+def test_reccobeats_ranks_after_freqblog():
+    fb = Fake("freqblog", {"bpm": 85.4, "camelot": "4A"})
+    rb = Fake("reccobeats", {"bpm": 120.0, "camelot": "8A"})
+    t = _track()
+    FeatureService([fb, rb]).enrich([t])
+    assert (t.features.bpm, t.features.camelot) == (85.4, "4A") and rb.calls == 0
+    fb2, rb2 = Fake("freqblog", None), Fake("reccobeats", {"bpm": 120.0, "camelot": "8A"})
+    t2 = _track()
+    FeatureService([fb2, rb2]).enrich([t2])
+    assert t2.features.sources["bpm"] == "reccobeats" and t2.features.sources["key"] == "reccobeats"
+
+
+def test_youtube_durations_are_not_used_for_identity_checks():
+    seen = []
+
+    class Rec(Fake):
+        def lookup(self, title, artist, duration):
+            seen.append(duration)
+            return None
+
+    yt = _track(duration=291)
+    yt.platform = "youtube"
+    sp = _track(title="Save Your Tears", duration=251, i=2)
+    FeatureService([Rec("freqblog")]).enrich([yt, sp])
+    assert sorted(seen, key=lambda d: d or 0) == [None, 251]

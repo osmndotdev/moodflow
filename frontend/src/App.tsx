@@ -92,6 +92,7 @@ function PlatformBadge({ platform }: { platform: "youtube" | "spotify" }) {
 
 const PROVIDER_LABEL: Record<string, string> = {
   freqblog: "FreqBlog",
+  reccobeats: "ReccoBeats",
   getsongbpm: "GetSongBPM",
   lastfm: "Last.fm",
   musicbrainz: "MusicBrainz",
@@ -591,7 +592,7 @@ export default function App() {
             )}
             <TrackTable tracks={tracks} />
             <p className="muted small">
-              Öncelik: FreqBlog → GetSongBPM (BPM/Key) → Last.fm / MusicBrainz (Genre) → yerel analiz. Kaynağı görmek için
+              Öncelik: FreqBlog → ReccoBeats / GetSongBPM (BPM/Key) → Last.fm / MusicBrainz (Genre) → yerel analiz. Kaynağı görmek için
               değerin üzerine gelin; <b>≈</b> yerel/türetilmiş değerdir (enerji bu durumda playlist içinde görecelidir).
               Bulunamayan değerler boş (—) bırakılır.
             </p>

@@ -2,6 +2,7 @@
 
 Priority (see ``features.py``):
   1. FreqBlog ``/lookup``            → bpm, bpm_alt, key, camelot, mood, valence, energy, genre
+  1b. ReccoBeats (keyless)           → missing bpm / key (batch by Spotify id, else title search)
   2. GetSongBPM ``/search`` + ``/song`` → missing bpm / key
   3. Last.fm ``track.getTopTags``    → missing genre
   4. MusicBrainz artist genres        → missing genre (keyless, 1 req/s)
@@ -25,7 +26,9 @@ from typing import Any
 import httpx
 import numpy as np
 
-from .features import camelot_from_key_name, camelot_from_open_key, fold_bpm, match_score, version_tags
+from .features import (
+    camelot_for, camelot_from_key_name, camelot_from_open_key, fold_bpm, match_score, version_tags,
+)
 
 log = logging.getLogger(__name__)
 
@@ -197,6 +200,116 @@ class GetSongBPMProvider:
         return ProviderResult("getsongbpm", f) if f else None
 
 
+# --------------------------------------------------------------------------- ReccoBeats
+
+_PITCH_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+
+class ReccoBeatsProvider:
+    """Keyless BPM + key fallback (Spotify-style audio features).
+
+    Spotify items are fetched in one batch by their Spotify track id (exact match, no guessing).
+    Everything else (YouTube items, ids ReccoBeats doesn't know) goes through a title search,
+    and the hit must pass the same artist / version / ±duration check as the other providers.
+    Only tempo and key/mode are used; ReccoBeats' energy/valence stay unused for now.
+    """
+
+    name = "reccobeats"
+    BASE = "https://api.reccobeats.com/v1"
+    BATCH = 40
+
+    def __init__(self, enabled: bool = True, client: httpx.Client | None = None,
+                 concurrency: int = 3, max_retry_after: float = 5.0, sleep=time.sleep):
+        self.client = client or httpx.Client(timeout=15, headers={"User-Agent": USER_AGENT,
+                                                                 "Accept": "application/json"})
+        self.disabled_reason: str | None = None if enabled else "MOODFLOW_RECCOBEATS=0"
+        self.max_retry_after = max_retry_after
+        self._sem = threading.Semaphore(concurrency)
+        self._sleep = sleep
+        self._by_spotify_id: dict[str, dict] = {}
+
+    @property
+    def enabled(self) -> bool:
+        return self.disabled_reason is None
+
+    def _get(self, path: str, params: dict | None = None) -> dict | None:
+        for attempt in range(2):
+            with self._sem:
+                res = self.client.get(f"{self.BASE}{path}", params=params)
+            if res.status_code == 429 and attempt == 0:
+                try:
+                    wait = float(res.headers.get("Retry-After", 1))
+                except ValueError:
+                    wait = 1.0
+                self._sleep(min(wait, self.max_retry_after))
+                continue
+            if res.status_code == 404:
+                return None
+            res.raise_for_status()
+            return res.json()
+        return None
+
+    def begin_batch(self, tracks=None) -> None:
+        """Prefetch audio features for every Spotify item in one or two requests."""
+        self._by_spotify_id = {}
+        if not self.enabled or not tracks:
+            return
+        ids = [t.source_id for t in tracks if t.platform == "spotify"]
+        for i in range(0, len(ids), self.BATCH):
+            try:
+                data = self._get("/audio-features", {"ids": ",".join(ids[i:i + self.BATCH])}) or {}
+            except httpx.HTTPError as err:
+                log.warning("reccobeats batch failed: %s", err)
+                return
+            for item in data.get("content") or []:
+                sid = (item.get("href") or "").rstrip("/").rsplit("/", 1)[-1]
+                if sid:
+                    self._by_spotify_id[sid] = item
+
+    def lookup_track(self, track) -> ProviderResult | None:
+        if not self.enabled:
+            return None
+        if track.platform == "spotify" and track.source_id in self._by_spotify_id:
+            return self._normalise(self._by_spotify_id[track.source_id])
+        from .features import match_duration
+
+        return self.lookup(track.title, track.artist, match_duration(track))
+
+    def lookup(self, title: str, artist: str, duration: float | None) -> ProviderResult | None:
+        if not self.enabled:
+            return None
+        # the search matches on title only (adding the artist returns nothing), so filter ourselves
+        clean_title = re.sub(r"\s*[\(\[].*?[\)\]]", "", title).strip() or title
+        data = self._get("/track/search", {"searchText": clean_title, "size": 25}) or {}
+        best, best_score = None, 0.0
+        for hit in data.get("content") or []:
+            names = ", ".join(a.get("name", "") for a in hit.get("artists") or [])
+            hit_dur = hit["durationMs"] / 1000 if hit.get("durationMs") else None
+            if not _accept_match(title, artist, duration, hit.get("trackTitle"), names, hit_dur):
+                continue
+            s = match_score(title, artist, duration, hit.get("trackTitle", ""), names, hit_dur)
+            if s > best_score:
+                best, best_score = hit, s
+        if not best or best_score < MIN_MATCH or not best.get("id"):
+            return None
+        feats = self._get(f"/track/{best['id']}/audio-features")
+        return self._normalise(feats) if feats else None
+
+    @staticmethod
+    def _normalise(x: dict) -> ProviderResult | None:
+        f: dict[str, Any] = {}
+        try:
+            if x.get("tempo"):
+                f["bpm"] = fold_bpm(float(x["tempo"]))  # often reported at half time
+        except (TypeError, ValueError):
+            pass
+        key, mode = x.get("key"), x.get("mode")
+        if isinstance(key, int) and 0 <= key <= 11 and mode in (0, 1):  # -1 = unknown
+            f["camelot"] = camelot_for(key, mode == 1)
+            f["key"] = f"{_PITCH_NAMES[key]}-{'Major' if mode == 1 else 'Minor'}"
+        return ProviderResult("reccobeats", f) if f else None
+
+
 # --------------------------------------------------------------------------- Last.fm
 
 NON_GENRE_TAGS = {
@@ -288,7 +401,7 @@ class MusicBrainzGenreProvider:
     def enabled(self) -> bool:
         return self.disabled_reason is None
 
-    def begin_batch(self) -> None:
+    def begin_batch(self, tracks=None) -> None:
         self._deadline = time.monotonic() + self.budget_sec
 
     @property

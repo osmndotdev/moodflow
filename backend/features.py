@@ -1,8 +1,8 @@
 """Five features (BPM, Key/Camelot, Mood, Energy, Genre): provider priority + fallback.
 
 Order per field (plan v1.8 §6.1):
-  BPM     FreqBlog → GetSongBPM → local preview beat tracking
-  Key     FreqBlog → GetSongBPM                      (no unverified local key estimate)
+  BPM     FreqBlog → ReccoBeats → GetSongBPM → local preview beat tracking
+  Key     FreqBlog → ReccoBeats → GetSongBPM         (no unverified local key estimate)
   Mood    FreqBlog → coarse mood derived from FreqBlog valence+energy, else null
   Energy  FreqBlog → local loudness, min-max normalised within the playlist
   Genre   FreqBlog → Last.fm tags → MusicBrainz artist genres
@@ -129,6 +129,12 @@ def mood_labels(valence: float, energy: float) -> list[str]:
 
 # --------------------------------------------------------------------------- orchestration
 
+def match_duration(track: Track) -> float | None:
+    """Duration usable for identity checks. YouTube lengths are video lengths (intros, outros,
+    skits) and often differ from the recording by 30-60 s, so they aren't compared."""
+    return track.duration_sec if track.platform == "spotify" else None
+
+
 class Provider(Protocol):
     name: str
     disabled_reason: str | None
@@ -148,6 +154,7 @@ class FeatureProvider(Protocol):
 PROVIDES = {
     "freqblog": {"bpm", "bpm_alt", "bpm_confidence", "key", "camelot", "key_confidence",
                  "mood", "valence", "energy", "genre"},
+    "reccobeats": {"bpm", "key", "camelot"},
     "getsongbpm": {"bpm", "key", "camelot"},
     "lastfm": {"genre"},
     "musicbrainz": {"genre"},
@@ -179,9 +186,11 @@ class FeatureService:
     # -- public
     def enrich(self, tracks: list[Track]) -> list[str]:
         warnings: list[str] = []
+        with self._lock:
+            uncached = [t for t in tracks if self.cache_key(t) not in self._cache]
         for p in self.providers:
-            if hasattr(p, "begin_batch"):
-                p.begin_batch()
+            if p.enabled and hasattr(p, "begin_batch"):
+                p.begin_batch(uncached)  # e.g. one batch request instead of one per track
         with ThreadPoolExecutor(self.workers) as pool:
             results = list(pool.map(self._collect, tracks))
         loudness: dict[int, float] = {}
@@ -226,7 +235,10 @@ class FeatureService:
             if not wanted:
                 continue
             try:
-                res = p.lookup(track.title, track.artist, track.duration_sec)
+                if hasattr(p, "lookup_track"):  # providers that can use platform ids (Spotify id)
+                    res = p.lookup_track(track)
+                else:
+                    res = p.lookup(track.title, track.artist, match_duration(track))
             except ProviderAuthError as err:
                 problems.append(str(err))
                 continue
@@ -295,11 +307,13 @@ def build_feature_service(cache_file: Path | None = None) -> FeatureService:
     """Providers from environment variables (server-side developer keys)."""
     from .feature_providers import (
         FreqBlogProvider, GetSongBPMProvider, LastFmProvider, LocalPreviewAnalyzer, MusicBrainzGenreProvider,
+        ReccoBeatsProvider,
     )
 
     flag = lambda name, default="1": os.getenv(name, default).strip().lower() not in ("0", "false", "no", "")  # noqa: E731
     return FeatureService([
         FreqBlogProvider(os.getenv("FREQBLOG_API_KEY")),
+        ReccoBeatsProvider(enabled=flag("MOODFLOW_RECCOBEATS")),
         GetSongBPMProvider(os.getenv("GETSONGBPM_API_KEY")),
         LastFmProvider(os.getenv("LASTFM_API_KEY")),
         # local preview before MusicBrainz: no overlapping fields, and it keeps workers busy while
