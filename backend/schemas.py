@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-Platform = Literal["youtube", "spotify"]
+Platform = Literal["youtube", "spotify", "apple"]
 Mode = Literal["daily", "dj", "emotional", "custom"]
 MatchStatus = Literal["pending", "matched", "unmatched", "failed"]
 

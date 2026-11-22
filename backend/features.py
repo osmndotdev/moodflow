@@ -133,9 +133,10 @@ def mood_labels(valence: float, energy: float) -> list[str]:
 # --------------------------------------------------------------------------- orchestration
 
 def match_duration(track: Track) -> float | None:
-    """Duration usable for identity checks. YouTube lengths are video lengths (intros, outros,
-    skits) and often differ from the recording by 30-60 s, so they aren't compared."""
-    return track.duration_sec if track.platform == "spotify" else None
+    """Duration usable for identity checks. Spotify / Apple Music durations are recording lengths;
+    YouTube lengths are video lengths (intros, outros, skits) and often differ from the recording
+    by 30-60 s, so they aren't compared."""
+    return track.duration_sec if track.platform in ("spotify", "apple") else None
 
 
 class Provider(Protocol):

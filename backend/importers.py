@@ -1,4 +1,5 @@
-"""Public playlist importers (no login): YouTube via yt-dlp, Spotify via the public embed page."""
+"""Public playlist importers (no login): YouTube via yt-dlp, Spotify via the public embed page,
+Apple Music via the public playlist page."""
 from __future__ import annotations
 
 import json
@@ -20,6 +21,8 @@ USER_AGENT = (
 
 _YT_LIST_RE = re.compile(r"^[A-Za-z0-9_-]{10,64}$")
 _SPOTIFY_ID_RE = re.compile(r"^[A-Za-z0-9]{22}$")
+_APPLE_ID_RE = re.compile(r"^pl\.(u-)?[A-Za-z0-9]{8,64}$")  # catalog (pl.xxx) or shared user (pl.u-xxx)
+_STOREFRONT_RE = re.compile(r"^[a-z]{2}$")
 
 
 class PlaylistImportError(Exception):
@@ -59,13 +62,25 @@ def parse_playlist_url(url: str) -> tuple[Platform, str]:
                 return "spotify", parts[idx + 1]
         raise PlaylistImportError("Bu bir Spotify playlist bağlantısı değil (open.spotify.com/playlist/... bekleniyor).")
 
+    if host.endswith("music.apple.com") or host == "itunes.apple.com":
+        parts = [p for p in parsed.path.split("/") if p]
+        # /{storefront}/playlist/{slug}/{id}  or  /{storefront}/playlist/{id}
+        if "playlist" in parts and parts[-1] and _APPLE_ID_RE.match(parts[-1]):
+            storefront = parts[0] if _STOREFRONT_RE.match(parts[0]) else "us"
+            return "apple", f"{storefront}/{parts[-1]}"
+        raise PlaylistImportError(
+            "Bu bir Apple Music playlist bağlantısı değil (music.apple.com/.../playlist/... bekleniyor)."
+        )
+
     if host in {"youtu.be"} or host.endswith("youtube.com"):
         list_id = parse_qs(parsed.query).get("list", [None])[0]
         if list_id and _YT_LIST_RE.match(list_id):
             return "youtube", list_id
         raise PlaylistImportError("YouTube bağlantısında playlist ('list=' parametresi) bulunamadı.")
 
-    raise PlaylistImportError("Yalnızca herkese açık YouTube veya Spotify playlist bağlantıları destekleniyor.")
+    raise PlaylistImportError(
+        "Yalnızca herkese açık YouTube, Spotify veya Apple Music playlist bağlantıları destekleniyor."
+    )
 
 
 # --------------------------------------------------------------------------- YouTube
@@ -230,8 +245,98 @@ class SpotifyPublicAdapter:
         return ImportResult("spotify", name, tracks, warnings)
 
 
+# --------------------------------------------------------------------------- Apple Music
+
+_APPLE_DATA_RE = re.compile(r'<script type="application/json" id="serialized-server-data">(.*?)</script>', re.S)
+
+
+class AppleMusicPublicAdapter:
+    """Reads a public Apple Music playlist from its web page (no login, no developer token).
+
+    The page ships its first ~100 tracks as JSON in ``serialized-server-data``; the track-list
+    section holds title, artist, duration and the catalog song id. Unofficial, like the Spotify
+    embed reader: if Apple changes the page, the import fails with a clear error.
+    """
+
+    PAGE_URL = "https://music.apple.com/{storefront}/playlist/{id}"
+
+    def __init__(self, client: httpx.Client | None = None):
+        self.client = client or httpx.Client(
+            timeout=15, follow_redirects=True, headers={"User-Agent": USER_AGENT, "Accept-Language": "en"}
+        )
+
+    def fetch_html(self, ref: str) -> str:
+        storefront, pid = ref.split("/", 1)
+        try:
+            resp = self.client.get(self.PAGE_URL.format(storefront=storefront, id=pid))
+        except httpx.HTTPError as err:
+            raise PlaylistImportError("Apple Music'e bağlanılamadı. Daha sonra tekrar deneyin.") from err
+        if resp.status_code == 404:
+            raise PlaylistImportError("Apple Music playlisti bulunamadı veya herkese açık değil.")
+        if resp.status_code >= 400:
+            raise PlaylistImportError(f"Apple Music playlisti okunamadı (HTTP {resp.status_code}).")
+        return resp.text
+
+    @staticmethod
+    def parse_html(html: str, limit: int = MAX_ITEMS) -> tuple[str | None, list[dict]]:
+        m = _APPLE_DATA_RE.search(html)
+        if not m:
+            raise PlaylistImportError("Apple Music sayfası beklenen formatta değil; girişsiz okuma şu an çalışmıyor.")
+        try:
+            data = json.loads(m.group(1))
+            page = data["data"][0]["data"]
+            sections = page["sections"]
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as err:
+            raise PlaylistImportError("Apple Music playlisti okunamadı (format değişmiş olabilir).") from err
+        title = None
+        items: list[dict] = []
+        for sec in sections:
+            kind = sec.get("itemKind")
+            if kind == "containerDetailHeaderLockup" and sec.get("items"):
+                title = sec["items"][0].get("title")
+            elif kind == "trackLockup":
+                items.extend(sec.get("items") or [])
+        if not items:
+            raise PlaylistImportError("Apple Music playlisti boş veya erişilemiyor.")
+        return title, items[:limit]
+
+    def fetch(self, ref: str, limit: int = MAX_ITEMS) -> ImportResult:
+        name, items = self.parse_html(self.fetch_html(ref), limit)
+        tracks: list[Track] = []
+        warnings: list[str] = []
+        for pos, item in enumerate(items, start=1):
+            desc = item.get("contentDescriptor") or {}
+            song_id = (desc.get("identifiers") or {}).get("storeAdamID")
+            title = item.get("title")
+            if desc.get("kind") not in ("song", "musicVideo") or not song_id or not title:
+                warnings.append(f"{pos}. öğe şarkı değil ve atlandı.")
+                continue
+            if item.get("isDisabled"):
+                warnings.append(f"{pos}. öğe ({title}) bu bölgede kullanılamıyor ve atlandı.")
+                continue
+            artist = item.get("artistName") or ", ".join(
+                a.get("title", "") for a in item.get("subtitleLinks") or [] if a.get("title")
+            )
+            duration_ms = item.get("duration")
+            tracks.append(Track(
+                occurrence_id=f"item-{pos:03d}",
+                platform="apple",
+                source_id=str(song_id),
+                title=title,
+                artist=artist or "Unknown",
+                duration_sec=round(duration_ms / 1000, 1) if duration_ms else None,
+                original_position=pos,
+                source_url=desc.get("url"),
+            ))
+        if not tracks:
+            raise PlaylistImportError("Apple Music playlistinde okunabilir şarkı yok.")
+        return ImportResult("apple", name, tracks, warnings)
+
+
 def import_playlist(url: str) -> ImportResult:
     platform, pid = parse_playlist_url(url)
     if platform == "youtube":
         return import_youtube(pid)
+    if platform == "apple":
+        return AppleMusicPublicAdapter().fetch(pid)
     return SpotifyPublicAdapter().fetch(pid)

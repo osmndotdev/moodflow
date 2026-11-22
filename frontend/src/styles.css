@@ -206,6 +206,10 @@ code {
   background: color-mix(in oklab, var(--yt) 20%, transparent);
   color: #ff9b9b;
 }
+.badge-apple {
+  background: color-mix(in oklab, #fa2d48 20%, transparent);
+  color: #ff9eab;
+}
 .badge-spotify {
   background: color-mix(in oklab, var(--sp) 20%, transparent);
   color: #8ff0b4;

@@ -1,4 +1,4 @@
-export type Platform = "youtube" | "spotify";
+export type Platform = "youtube" | "spotify" | "apple";
 export type Mode = "daily" | "dj" | "emotional" | "custom";
 
 export type FeatureName = "bpm" | "key" | "mood" | "energy" | "genre";

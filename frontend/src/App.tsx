@@ -6,6 +6,7 @@ import {
   type ImportResponse,
   type MixPlan,
   type MixStatus,
+  type Platform,
   type Mode,
   type RankResponse,
   type TargetCurve,
@@ -19,6 +20,10 @@ import FlowChart from "./FlowChart";
 const EXAMPLES = [
   { label: "YouTube · 80s Synth-Pop", url: "https://www.youtube.com/playlist?list=PLGBuKfnErZlAKsNDquW0QoEYZle-NMmDL" },
   { label: "Spotify · Today's Top Hits", url: "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M" },
+  {
+    label: "Apple Music · Today's Hits",
+    url: "https://music.apple.com/us/playlist/todays-hits/pl.f4d106fed2bd41149aaacabb233eb5eb",
+  },
 ];
 
 const MODES: { id: Mode; label: string; hint: string }[] = [
@@ -89,8 +94,10 @@ function Chips({ items, kind }: { items: string[] | null; kind: "mood" | "genre"
   );
 }
 
-function PlatformBadge({ platform }: { platform: "youtube" | "spotify" }) {
-  return <span className={`badge badge-${platform}`}>{platform === "youtube" ? "YouTube" : "Spotify"}</span>;
+const PLATFORM_LABEL: Record<Platform, string> = { youtube: "YouTube", spotify: "Spotify", apple: "Apple Music" };
+
+function PlatformBadge({ platform }: { platform: Platform }) {
+  return <span className={`badge badge-${platform}`}>{PLATFORM_LABEL[platform]}</span>;
 }
 
 const PROVIDER_LABEL: Record<string, string> = {
@@ -707,7 +714,7 @@ export default function App() {
         >
           <input
             type="url"
-            placeholder="Herkese açık YouTube veya Spotify playlist URL'si"
+            placeholder="Herkese açık YouTube, Spotify veya Apple Music playlist URL'si"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             disabled={importing}

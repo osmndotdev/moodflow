@@ -121,3 +121,91 @@ def test_spotify_adapter_errors(status, body):
     transport = httpx.MockTransport(lambda req: httpx.Response(status, text=body))
     with pytest.raises(PlaylistImportError):
         SpotifyPublicAdapter(httpx.Client(transport=transport)).fetch("37i9dQZF1DXcBWIGoYBM5M")
+
+
+# ------------------------------------------------------------------ Apple Music
+
+from backend.importers import AppleMusicPublicAdapter  # noqa: E402
+
+
+@pytest.mark.parametrize("url,expected", [
+    ("https://music.apple.com/us/playlist/todays-hits/pl.f4d106fed2bd41149aaacabb233eb5eb",
+     ("apple", "us/pl.f4d106fed2bd41149aaacabb233eb5eb")),
+    ("https://music.apple.com/tr/playlist/pl.f4d106fed2bd41149aaacabb233eb5eb?l=tr",
+     ("apple", "tr/pl.f4d106fed2bd41149aaacabb233eb5eb")),
+    ("music.apple.com/gb/playlist/my-mix/pl.u-AkAmPlyUxXkWJ9", ("apple", "gb/pl.u-AkAmPlyUxXkWJ9")),
+])
+def test_parse_apple_urls(url, expected):
+    assert parse_playlist_url(url) == expected
+
+
+@pytest.mark.parametrize("url", [
+    "https://music.apple.com/us/album/stupid-song/1889992111",
+    "https://music.apple.com/us/playlist/x/not-a-playlist-id",
+])
+def test_parse_apple_invalid(url):
+    with pytest.raises(PlaylistImportError):
+        parse_playlist_url(url)
+
+
+def _apple_item(title, artist, song_id, duration=200000, kind="song", **extra):
+    return {"title": title, "artistName": artist, "duration": duration,
+            "subtitleLinks": [{"title": artist}],
+            "contentDescriptor": {"kind": kind, "identifiers": {"storeAdamID": song_id},
+                                  "url": f"https://music.apple.com/us/album/x/1?i={song_id}"}, **extra}
+
+
+def _apple_html(items, title="Today’s Hits"):
+    data = {"data": [{"intent": {}, "data": {"sections": [
+        {"itemKind": "containerDetailHeaderLockup", "items": [{"title": title}]},
+        {"itemKind": "trackLockup", "items": items},
+        {"itemKind": "bubbleLockup", "items": [{"title": "Featured artist"}]},
+    ]}}]}
+    return f'<html><script type="application/json" id="serialized-server-data">{json.dumps(data)}</script></html>'
+
+
+def test_apple_adapter_parses_page():
+    items = [
+        _apple_item("stupid song", "Olivia Rodrigo", "1889992115", 209680),
+        _apple_item("Some Episode", "Podcaster", "1", kind="podcastEpisode"),
+        _apple_item("Region Locked", "X", "2", isDisabled=True),
+        _apple_item("Solar Eclipse", "Drake & Don Toliver", "6818209989", 218389),
+    ]
+    seen = {}
+
+    def handler(req):
+        seen["url"] = str(req.url)
+        return httpx.Response(200, text=_apple_html(items))
+
+    res = AppleMusicPublicAdapter(httpx.Client(transport=httpx.MockTransport(handler))).fetch(
+        "tr/pl.f4d106fed2bd41149aaacabb233eb5eb")
+    assert seen["url"] == "https://music.apple.com/tr/playlist/pl.f4d106fed2bd41149aaacabb233eb5eb"
+    assert res.platform == "apple" and res.title == "Today’s Hits"
+    assert [(t.title, t.artist, t.source_id) for t in res.tracks] == [
+        ("stupid song", "Olivia Rodrigo", "1889992115"), ("Solar Eclipse", "Drake & Don Toliver", "6818209989")]
+    assert res.tracks[0].duration_sec == 209.7 and res.tracks[0].original_position == 1
+    assert res.tracks[1].original_position == 4 and res.tracks[1].occurrence_id == "item-004"
+    assert res.tracks[0].youtube_video_id is None and res.tracks[0].match_status == "pending"
+    assert len(res.warnings) == 2
+
+
+def test_apple_adapter_limit_20():
+    items = [_apple_item(f"Song {i}", "A", str(1000 + i)) for i in range(40)]
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(200, text=_apple_html(items))))
+    assert len(AppleMusicPublicAdapter(client).fetch("us/pl.abcdefgh12345").tracks) == 20
+
+
+@pytest.mark.parametrize("status,body", [(404, ""), (200, "<html>no data</html>"), (200, _apple_html([]))])
+def test_apple_adapter_errors(status, body):
+    client = httpx.Client(transport=httpx.MockTransport(lambda r: httpx.Response(status, text=body)))
+    with pytest.raises(PlaylistImportError):
+        AppleMusicPublicAdapter(client).fetch("us/pl.abcdefgh12345")
+
+
+def test_apple_durations_are_used_for_identity_checks():
+    from backend.features import match_duration
+    from backend.schemas import Track
+
+    t = Track(occurrence_id="item-001", platform="apple", source_id="1", title="x", artist="y",
+              duration_sec=210, original_position=1)
+    assert match_duration(t) == 210
