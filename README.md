@@ -34,16 +34,16 @@ npm --prefix frontend install
 Dev mode (two terminals):
 
 ```bash
-.venv/bin/uvicorn backend.main:app --port 8000
+.venv/bin/python -m backend
 ```
 
 ```bash
 npm --prefix frontend run dev
 ```
 
-Open http://localhost:5173 (Vite proxies `/api` to :8000).
+Open http://localhost:5173 (Vite proxies `/api` to the backend). The backend port is `MOODFLOW_PORT` in `.env` (default 8000).
 
-Single-port mode: `npm --prefix frontend run build`, then start uvicorn alone and open http://localhost:8000.
+Single-port mode: `npm --prefix frontend run build`, then start the backend alone and open http://localhost:8000 (or your `MOODFLOW_PORT`).
 
 Tests (offline, ~5 s; downloads and network are faked, audio is synthesized):
 
