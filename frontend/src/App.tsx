@@ -153,6 +153,54 @@ function urlPlatform(url: string): Platform | null {
   return null;
 }
 
+/** What the import is doing, cycled while it runs (the request reports no real progress, so no percentage). */
+const ANALYZE_STEPS: { icon: IconType; text: string }[] = [
+  { icon: LuListMusic, text: "Playlist ve şarkı listesi okunuyor" },
+  { icon: LuSearch, text: "Şarkılar veri kaynaklarında aranıyor" },
+  { icon: LuZap, text: "BPM ve ton bulunuyor" },
+  { icon: LuSmile, text: "Mood ve enerji çıkarılıyor" },
+  { icon: LuTags, text: "Türler etiketleniyor" },
+];
+const ANALYZE_BARS = Array.from({ length: 28 }, (_, i) => ({
+  delay: `${-((i * 137) % 900) / 1000}s`,
+  height: `${35 + ((i * 53) % 65)}%`,
+}));
+
+/** Big "analyzing" panel shown while a playlist is being imported. */
+function AnalyzingPanel({ platform }: { platform: Platform | null }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const t0 = Date.now();
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - t0) / 1000)), 250);
+    return () => clearInterval(id);
+  }, []);
+  const step = ANALYZE_STEPS[Math.floor(elapsed / 4) % ANALYZE_STEPS.length];
+  const StepIcon = step.icon;
+  const PIcon = platform ? PLATFORM_ICON[platform] : null;
+  return (
+    <div className="analyzing" role="status">
+      <div className="an-viz" aria-hidden="true">
+        {ANALYZE_BARS.map((b, i) => (
+          <i key={i} style={{ "--d": b.delay, "--h": b.height } as React.CSSProperties} />
+        ))}
+      </div>
+      <b className="an-title">
+        {PIcon && <PIcon className={`url-pf-${platform}`} aria-hidden="true" />}
+        {platform ? `${PLATFORM_LABEL[platform]} playlisti` : "Playlist"} analiz ediliyor
+      </b>
+      <span key={step.text} className="an-step">
+        <StepIcon aria-hidden="true" /> {step.text}…
+      </span>
+      <div className="an-bar" aria-hidden="true">
+        <span />
+      </div>
+      <p className="muted small" aria-hidden="true">
+        {elapsed} sn · genelde 10–60 sn sürer; tekrar okumalar önbellekten hızlı gelir.
+      </p>
+    </div>
+  );
+}
+
 function PlatformBadge({ platform }: { platform: Platform }) {
   const Icon = PLATFORM_ICON[platform];
   return (
@@ -942,11 +990,7 @@ export default function App() {
           })}
         </div>
         <ProviderStatus health={health} />
-        {importing && (
-          <p className="muted small loading-line">
-            <EqBars /> Şarkılar okunuyor ve BPM / Key / Mood / Energy / Genre analiz ediliyor (≈10–60 sn; tekrar okumalar önbellekten hızlı gelir)…
-          </p>
-        )}
+        {importing && <AnalyzingPanel platform={urlPlatform(url)} />}
         {importError && <div className="alert alert-error">{importError}</div>}
       </section>
 
