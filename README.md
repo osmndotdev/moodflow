@@ -13,6 +13,8 @@ No login, no OAuth, nothing is written back to YouTube/Spotify, no uploads.
 - Python 3.11+ (tested on 3.12 and 3.14: the full test suite and a live import → rank → mix give identical
   results on both; every dependency installs from prebuilt wheels on 3.14), Node 18+ (tested on 24)
 - `ffmpeg` and `ffprobe` on `PATH` (`brew install ffmpeg`)
+- Recommended on servers: [Deno](https://deno.com) on `PATH`. yt-dlp uses a JavaScript runtime for some
+  YouTube player checks; downloads currently also work without one, but YouTube changes often.
 - Internet access (YouTube, Spotify embed page, feature APIs)
 - **API keys (server-side, developer-owned; no end-user auth):** copy `.env.example` → `.env` and fill in
   - `FREQBLOG_API_KEY` — primary source for all five features. Free key (1,000 lookups/month, no card): https://freqblog.com/#pricing
