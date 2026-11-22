@@ -637,7 +637,7 @@ table.tracks {
   line-height: 1.3;
 }
 .orders-note {
-  margin: 14px 0 0;
+  margin: 8px 0 0;
 }
 .order-stats {
   display: grid;
@@ -1097,4 +1097,97 @@ a.prov {
   border: 1px solid var(--line);
   color: var(--muted);
   white-space: nowrap;
+}
+
+/* pinned first song */
+.pin-btn {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  opacity: 0.55;
+}
+.order-item:hover .pin-btn,
+.pin-btn:focus-visible {
+  opacity: 1;
+  border-color: var(--line);
+}
+.pin-btn:hover {
+  color: var(--text);
+}
+.pin-btn.on {
+  opacity: 1;
+  color: var(--accent);
+  border-color: color-mix(in oklab, var(--accent) 50%, transparent);
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+}
+.order-item.pinned {
+  border-color: color-mix(in oklab, var(--accent) 60%, var(--line));
+  box-shadow: 0 0 0 2px color-mix(in oklab, var(--accent) 14%, transparent);
+}
+.pin-badge {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  vertical-align: 2px;
+  color: #e6d8ff;
+  background: color-mix(in oklab, var(--accent) 30%, transparent);
+}
+.pin-row {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.pin-row svg {
+  vertical-align: -2px;
+}
+.pin-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+  color: var(--muted);
+}
+.pin-chip svg {
+  color: var(--accent);
+}
+.pin-chip b {
+  color: var(--text);
+}
+
+/* cards adapt to their column width, not the viewport: drop the key name first, then the energy number */
+.order-col {
+  container-type: inline-size;
+}
+@container (max-width: 560px) {
+  .order-item {
+    gap: 10px;
+    padding: 12px 12px;
+  }
+  .order-stats {
+    grid-template-columns: 38px 40px 84px;
+    gap: 10px;
+  }
+  .stat-sub {
+    display: none;
+  }
+}
+@container (max-width: 420px) {
+  .order-stats {
+    grid-template-columns: 38px 40px 50px;
+  }
+  .stat-num {
+    display: none;
+  }
 }

@@ -1,3 +1,4 @@
+import pytest
 from collections import Counter
 
 from backend.ranking import Objective, d_bpm, d_key, rank, resolve_weights, target_curve, transition_cost
@@ -184,3 +185,35 @@ def test_rank_returns_the_curve_it_used():
     assert rank(tracks, "daily")["curve"] is None and rank(tracks, "dj")["curve"] is None
     custom = rank(tracks, "custom", None, TargetCurve(feature="energy", points=[0.2, 0.9], strength=1))["curve"]
     assert custom["feature"] == "energy" and custom["targets"][0] == 0 and custom["targets"][-1] == 1
+
+
+# ------------------------------------------------------------------ pinned first song
+
+@pytest.mark.parametrize("mode", ["daily", "dj", "emotional", "custom"])
+def test_pinned_song_is_always_first(sample_tracks, mode):
+    ids = [t.occurrence_id for t in sample_tracks]
+    for pinned in ("item-001", "item-005", "item-009", "item-010"):  # incl. a no-metadata track and a duplicate
+        res = rank(sample_tracks, mode, Weights(bpm=1, key=1), None, pinned)
+        assert res["ordered_ids"][0] == pinned and res["first_id"] == pinned
+        assert sorted(res["ordered_ids"]) == sorted(ids)
+
+
+def test_pin_with_curve_still_fits_the_rest():
+    tracks = [_t(i, bpm=b) for i, b in enumerate([100, 128, 90, 140, 115, 122, 96, 133])]
+    res = rank(tracks, "custom", Weights(bpm=1), TargetCurve(feature="bpm", points=[140, 90], strength=1),
+               first_id="item-002")  # the 90 BPM song, against a falling curve
+    bpms = _bpms(res, tracks)
+    assert bpms[0] == 90 and bpms[1:] == sorted(bpms[1:], reverse=True)
+
+
+def test_pin_matching_original_first_can_keep_original():
+    tracks = [_t(i, bpm=100 + i) for i in range(6)]
+    res = rank(tracks, "custom", Weights(bpm=1), None, "item-000")
+    assert res["ordered_ids"] == [t.occurrence_id for t in tracks] and res["kept_original"]
+
+
+def test_pin_small_playlist_and_unknown_id():
+    tracks = [_t(i, bpm=100 + i) for i in range(2)]
+    assert rank(tracks, "daily", None, None, "item-001")["ordered_ids"] == ["item-001", "item-000"]
+    with pytest.raises(ValueError):
+        rank(tracks, "daily", None, None, "nope")

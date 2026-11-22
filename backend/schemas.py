@@ -74,6 +74,7 @@ class RankRequest(BaseModel):
     mode: Mode = "daily"
     weights: Weights | None = None
     target: TargetCurve | None = None  # used in Custom mode only
+    first_id: str | None = None  # occurrence_id pinned as the first song (any mode)
 
 
 class RankResponse(BaseModel):
@@ -81,6 +82,7 @@ class RankResponse(BaseModel):
     score_before: float
     score_after: float
     kept_original: bool = False
+    first_id: str | None = None
     curve_error_before: float | None = None
     curve_error_after: float | None = None
     # the curve used (Emotional arc or Custom target), playlist-relative 0..1:

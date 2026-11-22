@@ -234,13 +234,14 @@ def _greedy(start: int, obj: Objective) -> list[int]:
     return order
 
 
-def _local_search(order: list[int], obj: Objective, max_rounds: int = 50) -> list[int]:
+def _local_search(order: list[int], obj: Objective, max_rounds: int = 50, lo: int = 0) -> list[int]:
+    """Swap/relocate improvement; positions before ``lo`` are fixed (a pinned first song)."""
     best, best_score = order[:], obj.score(order)
     n = len(order)
     for _ in range(max_rounds):
         improved = False
-        for i in range(n):
-            for j in range(n):
+        for i in range(lo, n):
+            for j in range(lo, n):
                 if i == j:
                     continue
                 # swap
@@ -305,24 +306,35 @@ def transition_breakdown(order: list[Track], weights: dict[str, float]) -> list[
 
 
 def rank(tracks: list[Track], mode: Mode = "daily", weights: Weights | None = None,
-         target: TargetCurve | None = None) -> dict:
+         target: TargetCurve | None = None, first_id: str | None = None) -> dict:
+    """``first_id`` pins that occurrence to position 1; only the rest is reordered."""
     n = len(tracks)
     ids = [t.occurrence_id for t in tracks]
+    if first_id is not None and first_id not in ids:
+        raise ValueError(f"İlk şarkı olarak seçilen öğe listede yok: {first_id}")
+    pin = ids.index(first_id) if first_id is not None else None
+    front = (lambda order: order if pin is None else [pin] + [i for i in order if i != pin])  # noqa: E731
     if n < 3:
+        order = front(list(range(n)))
         w = resolve_weights(mode, weights)
-        steps = transition_breakdown(tracks, w)
-        return {"ordered_ids": ids, "score_before": 0.0, "score_after": 0.0, "kept_original": True,
+        steps = transition_breakdown([tracks[i] for i in order], w)
+        return {"ordered_ids": [ids[i] for i in order], "score_before": 0.0, "score_after": 0.0,
+                "kept_original": order == list(range(n)), "first_id": first_id,
                 "transition_costs": [s["total"] for s in steps],
-                "transition_breakdown": {"before": steps, "after": steps}}
+                "transition_breakdown": {"before": transition_breakdown(tracks, w), "after": steps}}
     obj = Objective(tracks, mode, weights, target if mode == "custom" else None)
     original = list(range(n))
     before = obj.score(original)
-    best, best_score = original, before
-    candidates = [_greedy(start, obj) for start in _start_indices(obj, tracks)]
+    # with a pin, the fallback is the original order with the pinned song moved to the front
+    baseline = original if pin in (None, 0) else front(original)
+    best, best_score = baseline, obj.score(baseline)
+    lo = 0 if pin is None else 1
+    candidates = [_greedy(pin, obj)] if pin is not None else []
+    candidates += [front(_greedy(start, obj)) for start in _start_indices(obj, tracks) if start != pin]
     if (matched := obj.curve_matching_order()) is not None:
-        candidates.insert(0, matched)
+        candidates.insert(0, front(matched))
     for start_order in candidates:
-        cand = _local_search(start_order, obj)
+        cand = _local_search(start_order, obj, lo=lo)
         s = obj.score(cand)
         if s < best_score - 1e-9:
             best, best_score = cand, s
@@ -333,6 +345,7 @@ def rank(tracks: list[Track], mode: Mode = "daily", weights: Weights | None = No
         "score_before": round(before, 4),
         "score_after": round(best_score, 4),
         "kept_original": kept,
+        "first_id": first_id,
         # mean distance to the curve (0 = exact fit), for a user target or the emotional arc
         "curve_error_before": None if err_before is None else round(err_before, 4),
         "curve_error_after": None if err_after is None else round(err_after, 4),

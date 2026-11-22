@@ -322,7 +322,28 @@ function TransitionRow({ a, b, step }: { a: Track; b: Track; step?: TransitionSt
   );
 }
 
-function OrderList({ title, tracks, steps }: { title: string; tracks: Track[]; steps?: TransitionStep[] }) {
+const PinIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
+    <path
+      d="M15 3l6 6-3 1-4 4 1 5-2 2-4-4-5 5H3v-1l5-5-4-4 2-2 5 1 4-4z"
+      fill="currentColor"
+    />
+  </svg>
+);
+
+function OrderList({
+  title,
+  tracks,
+  steps,
+  pinnedId,
+  onPin,
+}: {
+  title: string;
+  tracks: Track[];
+  steps?: TransitionStep[];
+  pinnedId?: string | null;
+  onPin?: (id: string | null) => void;
+}) {
   return (
     <div className="order-col">
       <h3>{title}</h3>
@@ -332,10 +353,13 @@ function OrderList({ title, tracks, steps }: { title: string; tracks: Track[]; s
           return (
             <li key={t.occurrence_id}>
               {i > 0 && <TransitionRow a={tracks[i - 1]} b={t} step={steps?.[i - 1]} />}
-              <div className="order-item">
+              <div className={`order-item ${pinnedId === t.occurrence_id ? "pinned" : ""}`}>
                 <span className="pos">{i + 1}</span>
                 <span className="order-main">
-                  <span className="song-title">{t.title}</span>
+                  <span className="song-title">
+                    {pinnedId === t.occurrence_id && <span className="pin-badge">İlk şarkı</span>}
+                    {t.title}
+                  </span>
                   <span className="song-artist">
                     {t.artist}
                     {f.mood?.length ? ` · ${f.mood.join(", ")}` : ""}
@@ -361,6 +385,17 @@ function OrderList({ title, tracks, steps }: { title: string; tracks: Track[]; s
                     </span>
                   </span>
                 </span>
+                {onPin && (
+                  <button
+                    className={`pin-btn ${pinnedId === t.occurrence_id ? "on" : ""}`}
+                    aria-pressed={pinnedId === t.occurrence_id}
+                    aria-label={pinnedId === t.occurrence_id ? `${t.title}: sabitlemeyi kaldır` : `${t.title}: ilk şarkı yap`}
+                    title={pinnedId === t.occurrence_id ? "Sabitlemeyi kaldır" : "Bu şarkıyı ilk sıraya sabitle"}
+                    onClick={() => onPin(pinnedId === t.occurrence_id ? null : t.occurrence_id)}
+                  >
+                    <PinIcon />
+                  </button>
+                )}
               </div>
             </li>
           );
@@ -523,6 +558,7 @@ export default function App() {
   // user-drawn target curve (Custom mode only; kept while other modes are viewed)
   const [target, setTarget] = useState<TargetCurve | null>(null);
   const [curveStrength, setCurveStrength] = useState(0.7);
+  const [firstId, setFirstId] = useState<string | null>(null); // song pinned as #1 of the result
   const rankSeq = useRef(0);
   const [ranking, setRanking] = useState<RankResponse | null>(null);
   const [rankError, setRankError] = useState<string | null>(null);
@@ -553,6 +589,8 @@ export default function App() {
     [ignoring, tracks, excludedIds],
   );
   const byId = useMemo(() => Object.fromEntries(tracks.map((t) => [t.occurrence_id, t])), [tracks]);
+  // a pin only counts while that song takes part (e.g. not when ignored for missing data)
+  const pinnedId = firstId && activeTracks.some((t) => t.occurrence_id === firstId) ? firstId : null;
   // values measured from the downloaded recordings during a mix: shown in the table only
   // (plan v1.8 §6.4: local analysis is for the mix), ranking keeps using provider data
   const displayTracks = useMemo(() => {
@@ -577,6 +615,7 @@ export default function App() {
     setImportError(null);
     setPlaylist(null);
     setRanking(null);
+    setFirstId(null);
     setMixStatus(null);
     setMixError(null);
     stopPolling();
@@ -602,6 +641,7 @@ export default function App() {
           mode,
           custom ? weights : undefined,
           custom && target ? { ...target, strength: curveStrength } : undefined,
+          pinnedId,
         );
         if (seq === rankSeq.current) setRanking(res); // ignore responses that arrive out of order
       } catch (e) {
@@ -609,7 +649,7 @@ export default function App() {
       }
     }, mode === "custom" ? 200 : 0);
     return () => window.clearTimeout(handle);
-  }, [activeTracks, mode, weights, target, curveStrength]);
+  }, [activeTracks, mode, weights, target, curveStrength, pinnedId]);
 
   const onTarget = (t: TargetCurve | null) => {
     setTarget(t);
@@ -812,13 +852,40 @@ export default function App() {
                   mode={mode}
                   modeCurve={mode === "emotional" ? ranking.curve : null}
                 />
+                <div className="pin-row">
+                  {pinnedId ? (
+                    <span className="pin-chip">
+                      <PinIcon /> İlk şarkı: <b>{byId[pinnedId]?.title}</b>
+                      <button className="chip-btn" onClick={() => setFirstId(null)}>
+                        Kaldır
+                      </button>
+                    </span>
+                  ) : (
+                    <span className="muted small-inline">
+                      İsterseniz bir kartın <PinIcon /> düğmesiyle bir şarkıyı ilk sıraya sabitleyin; geri kalanı ona göre
+                      sıralanır.
+                    </span>
+                  )}
+                </div>
                 <p className="muted small orders-note">
                   Kartlar arasındaki satır geçişi özetler: etiket (akıcı / orta / sert) seçili modun ağırlıklarıyla
                   hesaplanan geçiş maliyetinden gelir; ayrıntı için üzerine gelin.
                 </p>
                 <div className="orders">
-                  <OrderList title="Orijinal sıra" tracks={activeTracks} steps={ranking.transition_breakdown?.before} />
-                  <OrderList title="MoodFlow sırası" tracks={ranked} steps={ranking.transition_breakdown?.after} />
+                  <OrderList
+                    title="Orijinal sıra"
+                    tracks={activeTracks}
+                    steps={ranking.transition_breakdown?.before}
+                    pinnedId={pinnedId}
+                    onPin={setFirstId}
+                  />
+                  <OrderList
+                    title="MoodFlow sırası"
+                    tracks={ranked}
+                    steps={ranking.transition_breakdown?.after}
+                    pinnedId={pinnedId}
+                    onPin={setFirstId}
+                  />
                 </div>
                 <p className="muted small">Sıralama yalnızca uygulama içinde yapılır; kaynak playlist değişmez.</p>
               </>

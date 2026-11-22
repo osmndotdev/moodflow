@@ -86,6 +86,7 @@ export interface RankResponse {
   score_before: number;
   score_after: number;
   kept_original: boolean;
+  first_id: string | null;
   curve_error_before: number | null;
   curve_error_after: number | null;
   /** the curve the optimizer used (Emotional arc or Custom target), playlist-relative 0..1 */
@@ -151,8 +152,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   importPlaylist: (url: string) =>
     request<ImportResponse>("/api/import", { method: "POST", body: JSON.stringify({ url }) }),
-  rank: (tracks: Track[], mode: Mode, weights?: Weights, target?: TargetCurve) =>
-    request<RankResponse>("/api/rank", { method: "POST", body: JSON.stringify({ tracks, mode, weights, target }) }),
+  rank: (tracks: Track[], mode: Mode, weights?: Weights, target?: TargetCurve, firstId?: string | null) =>
+    request<RankResponse>("/api/rank", {
+      method: "POST",
+      body: JSON.stringify({ tracks, mode, weights, target, first_id: firstId ?? null }),
+    }),
   startMix: (tracks: Track[], ordered_ids: string[]) =>
     request<{ mix_id: string; status: string }>("/api/mix", {
       method: "POST",
