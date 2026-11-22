@@ -9,6 +9,7 @@ import {
   type Mode,
   type RankResponse,
   type TargetCurve,
+  type TransitionStep,
   type Track,
   type TrackStage,
   type Weights,
@@ -267,42 +268,103 @@ function TrackTable({ tracks }: { tracks: Track[] }) {
 
 /* ------------------------------------------------------------------ ordering */
 
-function OrderList({ title, tracks, costs }: { title: string; tracks: Track[]; costs?: number[] }) {
+function transitionQuality(total: number): { cls: string; label: string } {
+  if (total < 0.2) return { cls: "good", label: "Akıcı geçiş" };
+  if (total < 0.4) return { cls: "ok", label: "Orta geçiş" };
+  return { cls: "rough", label: "Sert geçiş" };
+}
+
+function keyRelation(d: number): string {
+  if (d === 0) return "aynı ton";
+  if (d <= 0.2) return "uyumlu ton";
+  if (d <= 0.5) return "yakın ton";
+  if (d < 1) return "uzak ton";
+  return "uyumsuz ton";
+}
+
+const signed = (v: number, digits = 0) => `${v > 0 ? "+" : v < 0 ? "−" : "±"}${Math.abs(v).toFixed(digits)}`;
+
+/** One line between two cards: how well song a flows into song b, in words. */
+function TransitionRow({ a, b, step }: { a: Track; b: Track; step?: TransitionStep }) {
+  if (!step) return null;
+  const q = transitionQuality(step.total);
+  const facts: string[] = [];
+  const fa = a.features;
+  const fb = b.features;
+  if (fa.bpm && fb.bpm) {
+    const diff = fb.bpm - fa.bpm;
+    const ratio = Math.max(fa.bpm, fb.bpm) / Math.min(fa.bpm, fb.bpm);
+    if (Math.abs(diff) < 1.5) facts.push("aynı tempo");
+    else if (ratio > 1.6 && step.bpm != null && step.bpm < 0.4) facts.push(`tempo ${signed(diff)} BPM (yarım/çift tempo)`);
+    else facts.push(`tempo ${signed(diff)} BPM`);
+  }
+  if (fa.camelot && fb.camelot && step.key != null) {
+    facts.push(fa.camelot === fb.camelot ? `ton ${fa.camelot}, aynı` : `ton ${fa.camelot} → ${fb.camelot} ${keyRelation(step.key)}`);
+  }
+  if (fa.energy != null && fb.energy != null) {
+    const de = fb.energy - fa.energy;
+    facts.push(Math.abs(de) < 0.03 ? "enerji aynı" : `enerji ${de > 0 ? "↑" : "↓"}${Math.abs(de).toFixed(2)}`);
+  }
+  const detail = (["bpm", "key", "mood", "energy", "genre"] as const)
+    .map((f) => `${f}: ${step[f] == null ? "karşılaştırılamaz" : step[f]!.toFixed(2)}`)
+    .join(" · ");
   return (
-    <div className="order-col">
-      <h3>{title}</h3>
-      <ol className="order-list">
-        {tracks.map((t, i) => (
-          <li key={t.occurrence_id}>
-            <div className="order-item">
-              <span className="pos">{i + 1}</span>
-              <span className="order-main">
-                <span className="song-title">{t.title}</span>
-                <span className="song-artist">{t.artist}</span>
-              </span>
-              <span className="order-meta">
-                {costs && i > 0 && costs[i - 1] != null && (
-                  <span className="tcost" title="Önceki şarkıdan geçiş maliyeti (düşük = daha uyumlu)">
-                    <span className="tdot" style={{ background: costColor(costs[i - 1]) }} />
-                    {costs[i - 1].toFixed(2)}
-                  </span>
-                )}
-                {t.features.bpm ? <span>{Math.round(t.features.bpm)}</span> : null}
-                {t.features.camelot ? <span className="camelot sm">{t.features.camelot}</span> : null}
-                <EnergyBar value={t.features.energy} />
-              </span>
-            </div>
-          </li>
-        ))}
-      </ol>
+    <div className={`trans trans-${q.cls}`} title={`Geçiş maliyeti ${step.total.toFixed(2)} (0 = kusursuz). Özellik uzaklıkları: ${detail}`}>
+      <span className="trans-q">
+        <i />
+        {q.label}
+      </span>
+      {facts.length > 0 && <span className="trans-facts">{facts.join(" · ")}</span>}
     </div>
   );
 }
 
-function costColor(c: number) {
-  // green → amber → red
-  const hue = Math.round(130 - Math.min(1, c) * 130);
-  return `hsl(${hue} 70% 50%)`;
+function OrderList({ title, tracks, steps }: { title: string; tracks: Track[]; steps?: TransitionStep[] }) {
+  return (
+    <div className="order-col">
+      <h3>{title}</h3>
+      <ol className="order-list">
+        {tracks.map((t, i) => {
+          const f = t.features;
+          return (
+            <li key={t.occurrence_id}>
+              {i > 0 && <TransitionRow a={tracks[i - 1]} b={t} step={steps?.[i - 1]} />}
+              <div className="order-item">
+                <span className="pos">{i + 1}</span>
+                <span className="order-main">
+                  <span className="song-title">{t.title}</span>
+                  <span className="song-artist">
+                    {t.artist}
+                    {f.mood?.length ? ` · ${f.mood.join(", ")}` : ""}
+                  </span>
+                </span>
+                <span className="order-stats">
+                  <span className="stat">
+                    <span className="stat-label">BPM</span>
+                    <span className="stat-value">{f.bpm ? Math.round(f.bpm) : "—"}</span>
+                  </span>
+                  <span className="stat" title={f.key ?? undefined}>
+                    <span className="stat-label">Ton</span>
+                    <span className="stat-value">
+                      {f.camelot ? <span className="camelot sm">{f.camelot}</span> : "—"}
+                      {f.key && <span className="stat-sub">{f.key.replace("-", " ").replace("Major", "majör").replace("Minor", "minör")}</span>}
+                    </span>
+                  </span>
+                  <span className="stat stat-energy">
+                    <span className="stat-label">Enerji</span>
+                    <span className="stat-value">
+                      <EnergyBar value={f.energy} />
+                      {f.energy != null && <span className="stat-num">{f.energy.toFixed(2)}</span>}
+                    </span>
+                  </span>
+                </span>
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
 }
 
 /* ------------------------------------------------------------------ mix panel */
@@ -708,9 +770,13 @@ export default function App() {
                   mode={mode}
                   modeCurve={mode === "emotional" ? ranking.curve : null}
                 />
+                <p className="muted small orders-note">
+                  Kartlar arasındaki satır geçişi özetler: etiket (akıcı / orta / sert) seçili modun ağırlıklarıyla
+                  hesaplanan geçiş maliyetinden gelir; ayrıntı için üzerine gelin.
+                </p>
                 <div className="orders">
-                  <OrderList title="Orijinal sıra" tracks={tracks} />
-                  <OrderList title="MoodFlow sırası" tracks={ranked} costs={ranking.transition_costs} />
+                  <OrderList title="Orijinal sıra" tracks={tracks} steps={ranking.transition_breakdown?.before} />
+                  <OrderList title="MoodFlow sırası" tracks={ranked} steps={ranking.transition_breakdown?.after} />
                 </div>
                 <p className="muted small">Sıralama yalnızca uygulama içinde yapılır; kaynak playlist değişmez.</p>
               </>
