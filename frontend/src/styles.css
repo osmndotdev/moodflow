@@ -1575,3 +1575,8 @@ h2 svg {
     height: 45%;
   }
 }
+
+.curve-cta {
+  padding: 6px 13px;
+  font-size: 13px;
+}

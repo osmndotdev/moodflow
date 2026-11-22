@@ -298,10 +298,10 @@ export default function FlowChart({
           {!showCurve ? (
             <>
               <button
-                className="chip-btn"
+                className="btn btn-primary btn-sm curve-cta"
                 onClick={() => onTarget({ feature: curveFeature, points: fromShape(PRESETS[0].shape), strength })}
               >
-                <LuTarget className="inline-ic" aria-hidden="true" /> {metric.label} için hedef eğri çiz
+                <LuTarget aria-hidden="true" /> {metric.label} için hedef eğri çiz
               </button>
               {target && (
                 <span className="muted">
