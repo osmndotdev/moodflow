@@ -15,6 +15,7 @@ import {
   LuHeartPulse,
   LuKeyboardMusic,
   LuListMusic,
+  LuListPlus,
   LuListOrdered,
   LuMinus,
   LuPiggyBank,
@@ -850,6 +851,8 @@ export default function App() {
   const [mixError, setMixError] = useState<string | null>(null);
   const pollRef = useRef<number | null>(null);
   const [health, setHealth] = useState<Health | null>(null);
+  // auto mix is on unless the server says otherwise (MOODFLOW_MIX=0, e.g. the VPS)
+  const mixEnabled = health?.mix !== false;
 
   useEffect(() => {
     api.health().then(setHealth).catch(() => setHealth(null));
@@ -977,7 +980,11 @@ export default function App() {
         <div className="logo">
           <EqBars className="logo-mark" /> MoodFlow
         </div>
-        <p className="tagline">Playlistini oku, ruh haline göre yeniden sırala, tek tıkla geçişli bir miks dinle.</p>
+        <p className="tagline">
+          {mixEnabled
+            ? "Playlistini oku, ruh haline göre yeniden sırala, tek tıkla geçişli bir miks dinle."
+            : "Playlistini oku, ruh haline göre yeniden sırala, yeni sırayı kendi hesabına kaydet."}
+        </p>
       </header>
 
       <section className="card">
@@ -1054,11 +1061,19 @@ export default function App() {
           <li className="step-arrow" aria-hidden="true">
             <LuArrowRight />
           </li>
-          <li>
-            <LuWandSparkles aria-hidden="true" />
-            <b>Mixle</b>
-            <span>Tek tıkla en iyi bölümler seçilir, geçişlerle bağlanır ve sayfada çalar.</span>
-          </li>
+          {mixEnabled ? (
+            <li>
+              <LuWandSparkles aria-hidden="true" />
+              <b>Mixle</b>
+              <span>Tek tıkla en iyi bölümler seçilir, geçişlerle bağlanır ve sayfada çalar.</span>
+            </li>
+          ) : (
+            <li>
+              <LuListPlus aria-hidden="true" />
+              <b>Kaydet</b>
+              <span>Yeni sırayı Spotify veya YouTube Music hesabına playlist olarak kaydet.</span>
+            </li>
+          )}
         </ol>
       )}
 
@@ -1094,7 +1109,7 @@ export default function App() {
                     ? "Tüm şarkıların beş özelliği de var."
                     : !canIgnore
                       ? "Eksiksiz şarkı sayısı 3'ün altında; yok saymak sıralamayı anlamsız kılar."
-                      : "Açıkken en az bir özelliği eksik olan şarkılar sıralamaya, grafiğe ve miks'e alınmaz."
+                      : `Açıkken en az bir özelliği eksik olan şarkılar sıralamaya${mixEnabled ? ", grafiğe ve miks'e" : " ve grafiğe"} alınmaz.`
                 }
                 onClick={() => setIgnoreMissing((v) => !v)}
               >
@@ -1105,7 +1120,7 @@ export default function App() {
                 {incomplete.length === 0
                   ? "Eksik verili şarkı yok."
                   : ignoring
-                    ? `${incomplete.length} şarkı sıralama ve miks dışında (tabloda soluk gösteriliyor).`
+                    ? `${incomplete.length} şarkı sıralama${mixEnabled ? " ve miks" : ""} dışında (tabloda soluk gösteriliyor).`
                     : `${incomplete.length} şarkıda en az bir özellik eksik.`}
               </span>
             </div>
@@ -1116,9 +1131,9 @@ export default function App() {
               onPreview={onPreview}
             />
             <p className="muted small">
-              Öncelik: FreqBlog → ReccoBeats / GetSongBPM (BPM/Key) → Last.fm / MusicBrainz (Genre). Eksik BPM ve enerji, miks
-              sırasında indirilen kayıttan yerel olarak ölçülür. Kaynak, durum ve güven için değerin üzerine gelin; <b>≈</b>{" "}
-              yerel/türetilmiş değerdir. Bulunamayan değerler boş (—) bırakılır.
+              Öncelik: FreqBlog → ReccoBeats / GetSongBPM (BPM/Key) → Last.fm / MusicBrainz (Genre).
+              {mixEnabled && " Eksik BPM ve enerji, miks sırasında indirilen kayıttan yerel olarak ölçülür."} Kaynak, durum ve
+              güven için değerin üzerine gelin; <b>≈</b> yerel/türetilmiş değerdir. Bulunamayan değerler boş (—) bırakılır.
             </p>
           </section>
 
@@ -1222,14 +1237,16 @@ export default function App() {
             )}
           </section>
 
-          <MixPanel
-            status={mixStatus}
-            starting={mixStarting}
-            error={mixError}
-            tracks={tracks}
-            onStart={startMix}
-            disabled={!ranking}
-          />
+          {mixEnabled && (
+            <MixPanel
+              status={mixStatus}
+              starting={mixStarting}
+              error={mixError}
+              tracks={tracks}
+              onStart={startMix}
+              disabled={!ranking}
+            />
+          )}
 
           <ExportPanel
             tracks={activeTracks}

@@ -218,3 +218,21 @@ def test_close_fast_tempos_are_beat_matched(tmp_path):
     assert arrangement.plan_transition(a, b)[0] == "beat_crossfade"
     t = arrangement.build_plan([("A", a), ("B", b)])["transitions"][0]
     assert t["type"] == "beat_crossfade" and t["tempo_change_pct"] == pytest.approx(-4.4, abs=0.6)
+
+
+# ------------------------------------------------------------------ MOODFLOW_MIX=0 (e.g. the VPS)
+
+def test_mix_can_be_turned_off(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    client = TestClient(main.app)
+    body = {"tracks": [t.model_dump() for t in _tracks(3)], "ordered_ids": ["item-001", "item-002", "item-003"]}
+    assert client.get("/api/health").json()["mix"] is True
+
+    monkeypatch.setattr(main, "MIX_ENABLED", False)
+    assert client.get("/api/health").json()["mix"] is False
+    jobs_before = set(main.jobs)
+    res = client.post("/api/mix", json=body)
+    assert res.status_code == 403
+    assert "kapalı" in res.json()["detail"]
+    assert set(main.jobs) == jobs_before  # nothing was queued or downloaded

@@ -88,6 +88,11 @@ older releases), rebuilds the frontend, lists settings that `.env.example` has b
 runs `MOODFLOW_RESTART_CMD` from `.env` (e.g. `sudo systemctl restart moodflow`); without it, it reminds
 you to restart the backend yourself. Changes to `.env` itself also only take effect after a restart.
 
+Auto mix on/off: `MOODFLOW_MIX=0` in `.env` turns the auto mix off. `POST /api/mix` then answers 403,
+`/api/health` reports `"mix": false`, and the page hides the mix panel and its wording, so no song is ever
+downloaded. Import, ranking, song previews (platform embeds) and playlist export keep working. The VPS runs
+with it off because YouTube blocks yt-dlp downloads from its IP; local copies keep the default (on).
+
 Analytics: the VPS deployment uses [Microsoft Clarity](https://clarity.microsoft.com). Put
 `MOODFLOW_CLARITY_ID=zhr0drdbro` in the **VPS** `.env` only and restart; the backend then puts the project
 ID into the page it serves (`backend/analytics.py`), and the page shows a cookie banner
@@ -104,7 +109,8 @@ Legal pages (Turkish), extra Vite pages linked from the footer: the privacy poli
 policies require). Use `<public origin>/privacy/` and `/terms/` as the privacy policy and terms URLs of the
 Google OAuth consent screen. Update the privacy policy (and its date) when the data the app handles
 changes: new feature providers, cookies or storage keys, retention times (`MOODFLOW_*_TTL`, provider
-cache days) or analytics. The retention times it states are the `.env.example` defaults.
+cache days) or analytics. Both pages describe the VPS deployment: auto mix off (`MOODFLOW_MIX=0`), so
+they say no songs are downloaded, and the provider cache days they state are the `.env.example` defaults.
 
 Forks and teammates: leave `MOODFLOW_CLARITY_ID` empty (as `just setup` creates `.env`). Everything works
 without it; there is simply no banner, no "Çerez tercihleri" link and no tag. Deploying your own public

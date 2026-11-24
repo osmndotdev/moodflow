@@ -23,6 +23,8 @@ export interface Health {
   ok: boolean;
   ffmpeg: boolean;
   ffprobe: boolean;
+  /** false when the server runs with MOODFLOW_MIX=0 (auto mix hidden) */
+  mix?: boolean;
   feature_providers: Record<string, string | null>;
 }
 

@@ -42,6 +42,9 @@ CACHE_DIR = TMP / "cache"
 MIX_DIR = TMP / "mixes"
 MIX_TTL_SEC = int(os.getenv("MOODFLOW_MIX_TTL", 3600))
 CACHE_TTL_SEC = int(os.getenv("MOODFLOW_CACHE_TTL", 48 * 3600))  # since last use
+# Auto mix (downloads songs with yt-dlp). On by default; MOODFLOW_MIX=0 turns it off, e.g. on a server
+# whose IP YouTube blocks. Import, ranking, previews and playlist export keep working without it.
+MIX_ENABLED = os.getenv("MOODFLOW_MIX", "1").strip().lower() not in ("0", "false", "no", "off")
 MAX_MIX_TRACKS = 6
 DOWNLOAD_WORKERS = 3
 
@@ -219,6 +222,8 @@ def run_mix_job(mix_id: str, ordered: list[Track]) -> None:
 
 @app.post("/api/mix", response_model=MixStartResponse)
 def api_mix(req: MixRequest) -> MixStartResponse:
+    if not MIX_ENABLED:
+        raise HTTPException(status_code=403, detail="Otomatik miks bu sunucuda kapalı.")
     by_id = {t.occurrence_id: t for t in req.tracks}
     ordered = [by_id[i] for i in req.ordered_ids if i in by_id]
     if len(ordered) < 2:
@@ -356,6 +361,7 @@ def health() -> dict:
         "ok": True,
         "ffmpeg": bool(shutil.which("ffmpeg")),
         "ffprobe": bool(shutil.which("ffprobe")),
+        "mix": MIX_ENABLED,  # the UI hides the auto mix when false
         # provider → null when active, otherwise why it is skipped (keys themselves are never exposed)
         "feature_providers": feature_service.status(),
         "export_providers": {p: c["configured"] for p, c in oauth.providers().items()},
@@ -365,6 +371,8 @@ def health() -> dict:
 
 # serve the built frontend if present (single command demo: `npm run build` then uvicorn)
 _dist = ROOT / "frontend" / "dist"
+if not MIX_ENABLED:
+    log.info("Auto mix is off (MOODFLOW_MIX=0)")
 # Microsoft Clarity: only the VPS .env sets MOODFLOW_CLARITY_ID, so nothing else collects data
 _raw_clarity = os.getenv("MOODFLOW_CLARITY_ID", "")
 CLARITY_ID = clarity_id(_raw_clarity)
