@@ -104,7 +104,12 @@ Legal pages (Turkish), extra Vite pages linked from the footer: the privacy poli
 policies require). Use `<public origin>/privacy/` and `/terms/` as the privacy policy and terms URLs of the
 Google OAuth consent screen. Update the privacy policy (and its date) when the data the app handles
 changes: new feature providers, cookies or storage keys, retention times (`MOODFLOW_*_TTL`, provider
-cache days) or analytics.
+cache days) or analytics. The retention times it states are the `.env.example` defaults.
+
+Forks and teammates: leave `MOODFLOW_CLARITY_ID` empty (as `just setup` creates `.env`). Everything works
+without it; there is simply no banner, no "Çerez tercihleri" link and no tag. Deploying your own public
+copy? Don't reuse this project's Clarity ID (use your own project or none) and replace the operator name
+and contact in both legal pages, since they name the original operator.
 
 Tests (offline, ~10 s; downloads and network are faked, audio is synthesized):
 
