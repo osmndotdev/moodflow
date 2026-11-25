@@ -1,4 +1,4 @@
-# MoodFlow — mini demo
+# MoodFlow
 
 ▶ **[Watch the 1-minute demo video](https://youtu.be/pBFS0fYywUw)**
 
