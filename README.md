@@ -1,5 +1,7 @@
 # MoodFlow — mini demo
 
+▶ **[Watch the 1-minute demo video](https://youtu.be/pBFS0fYywUw)**
+
 Paste a **public YouTube, Spotify or Apple Music playlist URL** → MoodFlow reads up to 50 tracks, extracts
 **BPM, Key/Camelot, Mood, Energy, Genre**, re-orders them in one of four modes
 (**Daily / DJ Mix / Emotional / Custom**) and, with **"Otomatik Miks Oluştur"**, fetches the audio of the
